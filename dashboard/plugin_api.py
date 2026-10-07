@@ -510,8 +510,17 @@ def _result_preview(result: Any) -> str | None:
                     stack.insert(0, cur[k])
                     break
             else:
-                stack.extend(v for v in cur.values() if isinstance(v, (str, dict, list)))
-    return None
+                stack[:0] = [v for v in cur.values() if isinstance(v, (str, dict, list))]
+        elif isinstance(cur, (list, tuple)):
+            # lists (e.g. search results) previously fell through both branches
+            # and were silently discarded — push their items instead
+            stack[:0] = [x for x in cur if isinstance(x, (str, dict, list))][:3]
+    # last resort for shapes the walk cannot textualize: compact JSON
+    try:
+        compact = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        return compact[:400] if compact and compact != "null" else None
+    except (TypeError, ValueError):
+        return None
 
 
 @router.get("/tasks")
