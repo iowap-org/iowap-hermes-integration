@@ -16,9 +16,10 @@
  */
 
 import {
-  cn, haptic, host, Tip, Badge, Button, StatusDot,
+  cn, haptic, host, Tip, Badge, Button, StatusDot, Input, Textarea,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   icons, relativeTime,
-  usePluginI18n, useValue, useQuery, useQueryClient, queryClient, atom,
+  usePluginI18n, useValue, useQuery, useMutation, useQueryClient, queryClient, atom,
   PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, STATUSBAR_AREAS
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -81,6 +82,29 @@ function queueOf(n) {
   return typeof n?.queue_depth === 'number' ? n.queue_depth : 0
 }
 
+const TASK_KEY = [ID, 'tasks']
+const ACTIVITY_KEY = [ID, 'activity']
+
+// Stage → dot tone (mirrors the relay state machine pending→claimed→completed)
+function stageTone(st) {
+  if (st === 'completed') return 'good'
+  if (st === 'claimed' || st === 'pending') return 'warn'
+  if (st === 'failed' || st === 'timed_out') return 'bad'
+  return 'muted'
+}
+
+function capStatusTone(p) {
+  // a capability is only as alive as its available providers
+  return (p || []).some(x => x.available) ? 'good' : 'bad'
+}
+
+function providersShort(p, t) {
+  if (!p || !p.length) return t('noProviders')
+  const names = p.map(x => x.node_name || x.node_id).filter(Boolean)
+  const s = names.slice(0, 3).join(', ')
+  return names.length > 3 ? `${s} +${names.length - 3}` : s
+}
+
 // ---------------------------------------------------------------------------
 // register(ctx) — components close over ctx (rest, i18n, storage)
 // ---------------------------------------------------------------------------
@@ -101,6 +125,29 @@ export default {
           return res
         },
         refetchInterval: 5000,
+        refetchIntervalInBackground: false
+      })
+    }
+
+    // Task tracking: poll fast while anything is non-terminal, slow otherwise.
+    function useTasks() {
+      return useQuery({
+        queryKey: TASK_KEY,
+        queryFn: () => ctx.rest('/tasks', { timeoutMs: 20000 }),
+        refetchInterval: query => {
+          const tasks = query?.state?.data?.tasks
+          const busy = (tasks || []).some(x => !['completed', 'failed', 'timed_out'].includes(x.status))
+          return busy || (tasks || []).length === 0 ? 5000 : 60000
+        },
+        refetchIntervalInBackground: false
+      })
+    }
+
+    function useActivity() {
+      return useQuery({
+        queryKey: ACTIVITY_KEY,
+        queryFn: () => ctx.rest('/activity', { timeoutMs: 25000 }),
+        refetchInterval: 15000,
         refetchIntervalInBackground: false
       })
     }
@@ -242,10 +289,15 @@ export default {
       const t = usePluginI18n(ID)
       const queryClientLocal = useQueryClient()
       const { data, isError, error, isFetching, dataUpdatedAt, refetch } = useFleet()
+      const tasksQ = useTasks()
+      const activityQ = useActivity()
       const info = summaryOf(data)
       const nodes = workerNodes(data)
       const queueSum = nodes.reduce((a, n) => a + queueOf(n), 0)
       const hl = healthLineOf(data?.health)
+      const caps = activityQ.data?.capabilities || []
+      const daemon = activityQ.data?.daemon || {}
+      const localNode = activityQ.data?.local_node
 
       return jsxs('div', {
         className: 'flex h-full flex-col gap-4 overflow-y-auto p-6 text-sm',
@@ -294,7 +346,287 @@ export default {
               (data ? nodes : []).map(n => jsx(NodeCard, { key: n.node_id || pickName(n), n }))
             ]
           }),
-          jsx('div', { className: 'text-[11px] text-(--ui-text-quaternary)', children: t('backendBy') })
+          jsx('div', { className: 'text-[11px] text-(--ui-text-quaternary)', children: t('backendBy') }),
+
+          // --- activity: daemon self-sight, tracked tasks, capabilities ----
+          jsxs('div', { className: 'flex flex-col gap-3', children: [
+            jsxs('div', { className: 'flex items-center gap-3', children: [
+              jsx('div', { className: 'text-base font-medium', children: t('activityTitle') }),
+              jsx('span', { className: 'flex-1' }),
+              isFetching ? jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: '…' }) : null
+            ]}),
+            localNode
+              ? jsx('div', {
+                  className: 'text-xs text-(--ui-text-tertiary)',
+                  children: [t('localNode'), String(localNode.node_name || localNode.node_id || ''),
+                    daemon.running ? `· ${daemon.heartbeat_status || 'ok'}` : t('daemonSelf', String(daemon.tasks_completed ?? '?'))]
+                    .join(' ')
+                })
+              : null,
+            tasksQ.data?.tasks?.length
+              ? jsxs('div', { className: 'flex flex-wrap items-center gap-1.5 text-xs', children:
+                  tasksQ.data.tasks.map(x => jsxs('span', {
+                    className: 'inline-flex items-center gap-1 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5',
+                    children: [
+                      jsx(StatusDot, { tone: stageTone(x.status) }),
+                      jsx('span', { className: 'tabular-nums', children: (x.name || x.task_id).slice(0, 28) }),
+                      jsx('span', { className: 'truncate text-(--ui-text-quaternary)', children: x.status })
+                    ]
+                  }, x.task_id))
+                })
+              : null,
+            caps.length
+              ? jsxs('div', {
+                  className: 'grid gap-3',
+                  style: { gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' },
+                  children: caps.map(c => jsx(CapActivityCard, { key: c.name, c }))
+                })
+              : null
+          ]})
+        ]
+      })
+    }
+
+    // -----------------------------------------------------------------
+    // Tasks page (/iowap-tasks): submit + track + live status list
+    // -----------------------------------------------------------------
+    function StageRow({ s }) {
+      return jsxs('div', {
+        className: 'flex items-start gap-2 text-xs',
+        children: [
+          jsx(StatusDot, { tone: stageTone(s.status) }),
+          jsxs('div', {
+            className: 'min-w-0 flex-1',
+            children: [
+              jsxs('div', {
+                className: 'flex items-baseline gap-2',
+                children: [
+                  jsx('span', { className: 'truncate text-(--ui-text-secondary)', children: s.capability || s.stage_name || s.stage_id }),
+                  jsx('span', { className: 'tabular-nums text-(--ui-text-quaternary)', children: s.status }),
+                  s.claimed_by ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ${s.claimed_by}` }) : null,
+                  s.retry_count ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· retry ${s.retry_count}` }) : null
+                ]
+              }),
+              s.result_preview
+                ? jsx('div', {
+                    className: 'mt-0.5 break-words text-(--ui-text-tertiary)',
+                    style: { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
+                    children: s.result_preview
+                  })
+                : null
+            ]
+          })
+        ]
+      })
+    }
+
+    function TaskCard({ task }) {
+      return jsxs('div', {
+        className: 'flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary) p-3',
+        children: [
+          jsxs('div', { className: 'flex items-center gap-2', children: [
+            jsx(StatusDot, { tone: stageTone(task.status) }),
+            jsx('span', { className: 'truncate font-medium', children: task.name || task.task_id }),
+            task.priority ? jsx(Badge, { children: `p${task.priority}` }) : null,
+            jsx('span', { className: 'flex-1' }),
+            jsx('code', { className: 'text-[10px] text-(--ui-text-quaternary)', children: task.task_id })
+          ]}),
+          (task.stages || []).map(s => jsx(StageRow, { key: s.stage_id || s.stage_name, s })),
+          task.error
+            ? jsx('div', { className: 'text-xs text-destructive break-words', children: task.error })
+            : null,
+          (task.artifacts || []).length
+            ? jsx('div', { className: 'text-[11px] text-(--ui-text-tertiary)', children: task.artifacts.map(a => a.name).join(', ') })
+            : null
+        ]
+      })
+    }
+
+    function TasksPage() {
+      const t = usePluginI18n(ID)
+      const qc = useQueryClient()
+      const tasksQ = useTasks()
+      const activityQ = useActivity()
+
+      // form atoms — fresh per mount; no SDK react hooks by design
+      const $cap = atom('')
+      const $payload = atom('{}')
+      const $name = atom('')
+      const $formErr = atom('')
+      const $trackId = atom('')
+      const cap = useValue($cap)
+      const payloadTxt = useValue($payload)
+      const nameTxt = useValue($name)
+      const formErr = useValue($formErr)
+      const trackId = useValue($trackId)
+
+      const caps = (activityQ.data?.capabilities || []).filter(c => c.type === 'task')
+
+      const submit = useMutation({
+        mutationFn: body => ctx.rest('/tasks/submit', { method: 'POST', body, timeoutMs: 35000 }),
+        onSuccess: res => {
+          qc.invalidateQueries({ queryKey: TASK_KEY })
+          if (res?.ok) {
+            host.notify({ kind: 'info', message: t('submittedOk', res.task_id) })
+            $payload.set('{}'); $name.set(''); $formErr.set('')
+          } else {
+            host.notify({ kind: 'error', message: t('submitErr', res?.error || '?') })
+          }
+        },
+        onError: e => host.notify({ kind: 'error', message: t('submitErr', e?.message || String(e)) })
+      })
+      const track = useMutation({
+        mutationFn: tid => ctx.rest('/tasks/track', { method: 'POST', body: { task_id: tid }, timeoutMs: 20000 }),
+        onSuccess: res => {
+          qc.invalidateQueries({ queryKey: TASK_KEY })
+          if (res?.ok) { host.notify({ kind: 'info', message: t('trackOk', res.task_id) }); $trackId.set('') }
+          else host.notify({ kind: 'error', message: t('trackErr', res?.error || '?') })
+        },
+        onError: e => host.notify({ kind: 'error', message: t('trackErr', e?.message || String(e)) })
+      })
+
+      function doSubmit() {
+        let body
+        try { body = JSON.parse(payloadTxt) } catch { $formErr.set(t('invalidJson')); return }
+        if (!cap) { $formErr.set(t('pickCap')); return }
+        if (body === null || typeof body !== 'object' || Array.isArray(body)) { $formErr.set(t('invalidJson')); return }
+        $formErr.set('')
+        submit.mutate({ capability: cap, payload: body, name: nameTxt.trim() || undefined, priority: 0 })
+      }
+
+      const tasks = tasksQ.data?.tasks || []
+      const busy = tasks.some(x => !['completed', 'failed', 'timed_out'].includes(x.status))
+
+      return jsxs('div', {
+        className: 'flex h-full flex-col gap-4 overflow-y-auto p-6 text-sm',
+        children: [
+          jsxs('div', { className: 'flex items-center gap-3', children: [
+            jsx('div', { className: 'text-base font-medium', children: t('tasksTitle') }),
+            jsx('span', { className: 'flex-1' }),
+            jsx(Button, {
+              disabled: tasksQ.isFetching,
+              onClick: () => { haptic('tap'); qc.invalidateQueries({ queryKey: TASK_KEY }) },
+              children: t('refresh')
+            })
+          ]}),
+          jsx('div', {
+            className: 'text-xs text-(--ui-text-quaternary)',
+            children: t('tasksHint', String(tasks.length), busy ? t('busyLive') : t('idlePolled'))
+          }),
+
+          // --- submit form ---
+          jsxs('div', {
+            className: 'flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary) p-3',
+            children: [
+              jsx('div', { className: 'text-xs font-medium text-(--ui-text-tertiary)', children: t('submitTitle') }),
+              jsx(Select, {
+                value: cap,
+                onValueChange: v => $cap.set(v),
+                children: [
+                  jsx(SelectTrigger, { className: 'w-full', children: jsx(SelectValue, { placeholder: t('selectCap') }) }),
+                  jsx(SelectContent, {
+                    children: caps.map(c => jsx(SelectItem, {
+                      key: c.name, value: c.name,
+                      children: `${c.name} · ${providersShort(c.providers, t)}`
+                    }))
+                  })
+                ]
+              }),
+              jsx(Textarea, {
+                placeholder: '{ … }',
+                spellCheck: false,
+                value: payloadTxt,
+                onChange: e => $payload.set(e.target.value),
+                className: 'min-h-16 font-mono text-xs'
+              }),
+              jsx(Input, {
+                placeholder: t('namePh'),
+                value: nameTxt,
+                onChange: e => $name.set(e.target.value)
+              }),
+              formErr ? jsx('div', { className: 'text-xs text-destructive', children: formErr }) : null,
+              jsx(Button, {
+                onClick: () => { haptic('tap'); doSubmit() },
+                disabled: submit.isPending || !caps.length,
+                children: submit.isPending ? t('submitting') : t('submit')
+              }),
+              !caps.length && !activityQ.isLoading
+                ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: t('noSubmitCaps') })
+                : null
+            ]
+          }),
+
+          // --- track by id ---
+          jsxs('div', {
+            className: 'flex items-center gap-2',
+            children: [
+              jsx(Input, {
+                placeholder: 'task_…',
+                value: trackId,
+                onChange: e => $trackId.set(e.target.value),
+                className: 'flex-1 font-mono text-xs'
+              }),
+              jsx(Button, {
+                disabled: track.isPending || !trackId.trim(),
+                onClick: () => { haptic('tap'); track.mutate(trackId.trim()) },
+                children: track.isPending ? '…' : t('track')
+              })
+            ]
+          }),
+
+          // --- live list ---
+          jsxs('div', {
+            className: 'grid gap-3',
+            style: { gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' },
+            children: [
+              !tasksQ.data && !tasksQ.isError
+                ? jsx('div', { className: 'text-(--ui-text-quaternary)', children: t('loading') })
+                : null,
+              tasksQ.data && !tasks.length
+                ? jsx('div', { className: 'text-(--ui-text-quaternary)', children: t('noTasks') })
+                : null,
+              tasks.map(x => jsx(TaskCard, { key: x.task_id, task: x }))
+            ]
+          }),
+          (tasksQ.data?.errors || []).length
+            ? jsxs('div', { className: 'rounded-lg border border-(--ui-stroke-secondary) p-3 text-xs', children:
+                tasksQ.data.errors.map((e, i) => jsx('div', { key: i, className: 'text-(--ui-text-tertiary) break-words', children: '⚠ ' + e }))
+              })
+            : null,
+          tasksQ.isError
+            ? jsx('div', {
+                className: 'rounded-lg border border-(--ui-stroke-secondary) p-4 text-destructive',
+                children: t('loadErr') + ': ' + (tasksQ.error?.message || String(tasksQ.error || '')) + ' — ' + t('enableHint')
+              })
+            : null,
+          jsx('div', { className: 'text-[11px] text-(--ui-text-quaternary)', children: t('tasksScope') })
+        ]
+      })
+    }
+
+    function CapActivityCard({ c }) {
+      const t = usePluginI18n(ID)
+      return jsxs('div', {
+        className: 'flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary) p-3',
+        children: [
+          jsxs('div', { className: 'flex items-center gap-2', children: [
+            jsx(StatusDot, { tone: capStatusTone(c.providers) }),
+            jsx('span', { className: 'truncate font-medium', children: c.name }),
+            c.type ? jsx(Badge, { children: c.type }) : null,
+            jsx('span', { className: 'flex-1' }),
+            jsx('span', {
+              className: 'tabular-nums text-xs text-(--ui-text-quaternary)',
+              children: c.queues_total > 0 ? `Σ ${c.queues_total}` : ''
+            })
+          ]}),
+          jsx('div', { className: 'text-xs text-(--ui-text-tertiary) truncate', children: providersShort(c.providers, t) }),
+          c.description
+            ? jsx('div', {
+                className: 'text-[11px] leading-relaxed text-(--ui-text-quaternary) break-words',
+                style: { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
+                children: c.description
+              })
+            : null
         ]
       })
     }
@@ -323,7 +655,32 @@ export default {
         palRefresh: 'IOWAP: refresh fleet data',
         palStatus: 'IOWAP: fleet status',
         palStatusMsg: n => `Fleet: ${n} online`,
-        palPage: 'IOWAP: open fleet page'
+        palPage: 'IOWAP: open fleet page',
+        palTasks: 'IOWAP: open tasks page',
+        tasksTitle: 'IOWAP Tasks',
+        tasksHint: (n, mode) => `${n} tracked tasks — ${mode}`,
+        busyLive: 'live polling (non-terminal tasks present)',
+        idlePolled: 'idle polling',
+        tasksScope: 'tracking is instance-local: tasks submitted from this app (or added by id) — the relay exposes no global task list',
+        submitTitle: 'Submit a task',
+        selectCap: 'capability…',
+        namePh: 'name (optional)',
+        invalidJson: 'payload is not valid JSON (object expected)',
+        pickCap: 'pick a capability first',
+        submit: 'Submit',
+        submitting: 'submitting…',
+        submittedOk: tid => `submitted ${tid}`,
+        submitErr: e => `submit failed: ${e}`,
+        track: 'Track',
+        trackOk: tid => `tracking ${tid}`,
+        trackErr: e => `track failed: ${e}`,
+        noTasks: 'no tracked tasks yet',
+        noProviders: 'no providers',
+        noSubmitCaps: 'no task capabilities visible — is the node daemon connected?',
+        activityTitle: 'Activity',
+        daemonSelf: tid => `daemon off (completed ${tid})`,
+        localNode: 'local node',
+        capabilities: 'capabilities'
       },
       de: {
         paneTitle: 'IOWAP Fleet',
@@ -345,7 +702,32 @@ export default {
         palRefresh: 'IOWAP: Fleet-Daten aktualisieren',
         palStatus: 'IOWAP: Fleet-Status',
         palStatusMsg: n => `Fleet: ${n} online`,
-        palPage: 'IOWAP: Fleet-Seite öffnen'
+        palPage: 'IOWAP: Fleet-Seite öffnen',
+        palTasks: 'IOWAP: Tasks-Seite öffnen',
+        tasksTitle: 'IOWAP Tasks',
+        tasksHint: (n, mode) => `${n} getrackte Tasks — ${mode}`,
+        busyLive: 'Live-Polling (nicht-terminale Tasks vorhanden)',
+        idlePolled: 'ruhendes Polling',
+        tasksScope: 'Tracking ist instanzlokal: Tasks aus dieser App (oder per ID hinzugefügt) — das Relay hat keine globale Task-Liste',
+        submitTitle: 'Task einreichen',
+        selectCap: 'Capability…',
+        namePh: 'Name (optional)',
+        invalidJson: 'Payload ist kein valides JSON (Objekt erwartet)',
+        pickCap: 'erst eine Capability wählen',
+        submit: 'Einreichen',
+        submitting: 'reiche ein…',
+        submittedOk: tid => `eingereicht ${tid}`,
+        submitErr: e => `Einreichen fehlgeschlagen: ${e}`,
+        track: 'Tracken',
+        trackOk: tid => `tracking ${tid}`,
+        trackErr: e => `Tracken fehlgeschlagen: ${e}`,
+        noTasks: 'noch keine getrackten Tasks',
+        noProviders: 'keine Provider',
+        noSubmitCaps: 'keine Task-Capabilities sichtbar — ist der Node-Daemon verbunden?',
+        activityTitle: 'Aktivität',
+        daemonSelf: tid => `Daemon aus (abgeschlossen ${tid})`,
+        localNode: 'lokaler Node',
+        capabilities: 'Capabilities'
       }
     })
 
@@ -373,6 +755,19 @@ export default {
       id: 'fleet-nav',
       area: SIDEBAR_NAV_AREA,
       data: { path: '/iowap-fleet', label: ctx.i18n.t('navLabel'), codicon: 'project' }
+    })
+
+    // Tasks page (submit / track / live status) + nav row.
+    ctx.register({
+      id: 'tasks-page',
+      area: ROUTES_AREA,
+      data: { path: '/iowap-tasks' },
+      render: () => jsx(TasksPage, {})
+    })
+    ctx.register({
+      id: 'tasks-nav',
+      area: SIDEBAR_NAV_AREA,
+      data: { path: '/iowap-tasks', label: ctx.i18n.t('navLabel') + ' Tasks', codicon: 'checklist' }
     })
 
     // Statusbar chip (right side).
@@ -437,6 +832,20 @@ export default {
         run: () => {
           haptic('tap')
           host.navigate('/iowap-fleet')
+        }
+      }
+    })
+    ctx.register({
+      id: 'cmd-tasks',
+      area: PALETTE_AREA,
+      data: {
+        id: 'iowap.tasks',
+        label: ctx.i18n.t('palTasks'),
+        keywords: ['iowap', 'relay', 'tasks', 'submit'],
+        icon: icons.ListTodo,
+        run: () => {
+          haptic('tap')
+          host.navigate('/iowap-tasks')
         }
       }
     })

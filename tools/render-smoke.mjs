@@ -41,7 +41,7 @@ const sdkStub = {
   Badge: 'Badge',
   Button: 'Button',
   StatusDot: 'StatusDot',
-  icons: { RefreshCw: 'RefreshCw', Activity: 'Activity', LayoutDashboard: 'LayoutDashboard' },
+  icons: { RefreshCw: 'RefreshCw', Activity: 'Activity', LayoutDashboard: 'LayoutDashboard', ListTodo: 'ListTodo' },
   relativeTime: () => 'just now',
   usePluginI18n: () => {
     // Real-ish i18n: functions must survive being called with args.
@@ -50,15 +50,16 @@ const sdkStub = {
     })
     return k => table[k]
   },
-  useValue: () => ({ tone: 'good', online: 9, total: 9, errors: [] }),
-  useQuery: () => ({
-    data: globalThis.__FLEET_DATA__ ?? undefined,
-    isError: globalThis.__FLEET_IS_ERROR__ ?? false,
-    error: undefined,
-    isFetching: false,
-    dataUpdatedAt: Date.now(),
-    refetch: () => {}
-  }),
+  useValue: a => (a && typeof a.get === 'function' ? a.get() : a),
+  useQuery: def => {
+    // Per-key data: fleet (FLEET_KEY contains 'tasks'? no — fleet key uses
+    // 'fleet'), tasks, activity. The plugin passes the key as first arg.
+    const key = JSON.stringify(def?.queryKey || [])
+    if (key.includes('activity')) return { data: globalThis.__ACTIVITY_DATA__, isError: false, error: undefined, isFetching: false, isLoading: false, dataUpdatedAt: Date.now(), refetch: () => {} }
+    if (key.includes('tasks')) return { data: globalThis.__TASKS_DATA__, isError: false, error: undefined, isFetching: false, isLoading: false, dataUpdatedAt: Date.now(), refetch: () => {} }
+    return { data: globalThis.__FLEET_DATA__, isError: globalThis.__FLEET_IS_ERROR__ ?? false, error: undefined, isFetching: false, isLoading: false, dataUpdatedAt: Date.now(), refetch: () => {} }
+  },
+  useMutation: () => ({ mutate: () => {}, isPending: false, isError: false }),
   useQueryClient: () => ({ invalidateQueries: () => {} }),
   queryClient: { invalidateQueries: () => {} },
   atom: init => ({ get: () => init, set: () => {} }),
@@ -84,21 +85,25 @@ export const StatusDot = 'StatusDot'
 export const icons = ${JSON.stringify(sdkStub.icons)}
 export const relativeTime = () => 'just now'
 export const usePluginI18n = ${sdkStub.usePluginI18n.toString()}
-export const useValue = () => ({ tone: 'good', online: 9, total: 9, errors: [] })
-let __data
+export const useValue = a => (a && typeof a.get === 'function' ? a.get() : a)
 export function useQuery() {
-  return {
-    data: globalThis.__FLEET_DATA__ ?? undefined,
-    isError: globalThis.__FLEET_IS_ERROR__ ?? false,
-    error: undefined,
-    isFetching: false,
-    dataUpdatedAt: Date.now(),
-    refetch: () => {}
-  }
+  const def = arguments[0]
+  const key = JSON.stringify(def?.queryKey || [])
+  if (key.includes('activity')) return { data: globalThis.__ACTIVITY_DATA__, isError: false, error: undefined, isFetching: false, isLoading: false, dataUpdatedAt: Date.now(), refetch: () => {} }
+  if (key.includes('tasks')) return { data: globalThis.__TASKS_DATA__, isError: false, error: undefined, isFetching: false, isLoading: false, dataUpdatedAt: Date.now(), refetch: () => {} }
+  return { data: globalThis.__FLEET_DATA__, isError: globalThis.__FLEET_IS_ERROR__ ?? false, error: undefined, isFetching: false, isLoading: false, dataUpdatedAt: Date.now(), refetch: () => {} }
 }
+export const useMutation = () => ({ mutate: () => {}, isPending: false, isError: false })
 export const useQueryClient = () => ({ invalidateQueries: () => {} })
 export const queryClient = { invalidateQueries: () => {} }
 export const atom = init => ({ get: () => init, set: () => {} })
+export const Input = 'Input'
+export const Textarea = 'Textarea'
+export const Select = 'Select'
+export const SelectContent = 'SelectContent'
+export const SelectItem = 'SelectItem'
+export const SelectTrigger = 'SelectTrigger'
+export const SelectValue = 'SelectValue'
 export const PALETTE_AREA = 'palette'
 export const ROUTES_AREA = 'routes'
 export const SIDEBAR_NAV_AREA = 'sidebar-nav'
@@ -199,12 +204,34 @@ try {
   }
   for (const c of contributionsWithRender) renderContribution(c)
 
+  // Populated activity (tasks + capabilities — the new TasksPage path)
+  globalThis.__TASKS_DATA__ = {
+    generated_at: new Date().toISOString(),
+    tasks: [
+      { task_id: 'task_x1', name: 'T-006-plugin-smoke', status: 'completed', priority: 0, stages: [{ stage_id: 's1', capability: 'hermes-test.ai', status: 'completed', result_preview: 'ok', retry_count: 0, claimed_by: 'E4W3CBWQ' }], error: null, artifacts: [{ name: 'out.txt' }] },
+      { task_id: 'task_x2', name: 'draft-chapter', status: 'pending', priority: 1, stages: [{ stage_id: 's2', capability: 'draft.ai', status: 'pending', result_preview: '', retry_count: 1 }], error: 'retry exhausted on stage', artifacts: [] }
+    ],
+    errors: ['node r2 unreachable (timeout)']
+  }
+  globalThis.__ACTIVITY_DATA__ = {
+    generated_at: new Date().toISOString(),
+    daemon: { running: true, pid: 4242, heartbeat_status: 'ok', tasks_completed: 14, tasks_failed: 1 },
+    local_node: { node_id: 'n0', node_name: 'E4W3CBWQ', node_role: 'node' },
+    capabilities: [
+      { name: 'draft.ai', type: 'task', provider_count: 2, queues_total: 3, description: 'Writes draft sections.', providers: [{ node_id: 'n1', node_name: 'webstack', available: true, queues: [{ queue: 'q1', depth: 3 }] }, { node_id: 'n2', node_name: 'NovaForge', available: false, queues: [] }] },
+      { name: 'hermes-test.ai', type: 'task', provider_count: 1, queues_total: 0, description: 'Hermes connectivity test.', providers: [{ node_id: 'n0', node_name: 'E4W3CBWQ', available: false, queues: [] }] }
+    ]
+  }
+  for (const c of contributionsWithRender) renderContribution(c)
+
   // Error path (backend unreachable)
   globalThis.__FLEET_DATA__ = undefined
+  globalThis.__TASKS_DATA__ = undefined
+  globalThis.__ACTIVITY_DATA__ = undefined
   globalThis.__FLEET_IS_ERROR__ = true
   for (const c of contributionsWithRender) renderContribution(c)
 
-  console.log(`OK: ${contributionsWithRender.length} contributions rendered clean in 3 data states (empty/populated/error)`)
+  console.log(`OK: ${contributionsWithRender.length} contributions rendered clean in 4 data states (empty/populated/activity/error)`)
   rmSync(temp, { recursive: true, force: true })
   process.exit(0)
 } catch (err) {
