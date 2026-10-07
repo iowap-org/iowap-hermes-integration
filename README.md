@@ -59,7 +59,7 @@ curl -o ~/.hermes/plugins/iowap/dashboard/plugin_api.py \
 hermes config set plugins.enabled '["iowap"]'
 ```
 
-**Update an installed plugin** (this machine — from the repo):
+**Update an installed plugin** (from a repo checkout):
 
 ```bash
 tools/deploy.sh   # copies both halves, verifies md5; frontend hot-reloads,
