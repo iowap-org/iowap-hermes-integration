@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -37,15 +38,41 @@ router = APIRouter()
 # node-cli discovery / execution
 # ---------------------------------------------------------------------------
 
-NODE_CLI = shutil.which("node-cli") or "node-cli"
+# Known install locations, probed at call time. The desktop-spawned gateway
+# process does NOT inherit the login-shell PATH (desktop.log: "login-shell
+# PATH resolution unavailable; keeping inherited PATH"), so shutil.which()
+# alone finds nothing there — resolution must not depend on the ambient PATH.
+_NODE_CLI_CANDIDATES = (
+    "/home/felix/.hermes/hermes-agent/venv/bin/node-cli",
+    "/home/felix/.local/bin/node-cli",
+    "/usr/local/bin/node-cli",
+)
+
+
+def _resolve_node_cli() -> str:
+    found = shutil.which("node-cli")
+    if found:
+        return found
+    # Also probe inside known venvs' bin dirs that may not be on PATH.
+    for cand in _NODE_CLI_CANDIDATES:
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return "node-cli"  # let create_subprocess_exec raise a clear error
 
 
 async def _run_node_cli(args: list[str], timeout: float = 20.0) -> str:
     """Run node-cli --json <args>, return stdout (JSON text)."""
-    cmd = [NODE_CLI, "--json", *args]
+    cmd = [_resolve_node_cli(), "--json", *args]
+    env = dict(os.environ)
+    # Guarantee the venv bin dir is visible to node-cli itself (e.g. for
+    # sub-spawns), regardless of how empty the desktop-spawned PATH is.
+    venv_bin = "/home/felix/.hermes/hermes-agent/venv/bin"
+    if os.path.isdir(venv_bin) and venv_bin not in env.get("PATH", ""):
+        env["PATH"] = env.get("PATH", "") + os.pathsep + venv_bin
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd="/home/felix",  # never an iowap checkout (nodes/ shadow pitfall)
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -65,7 +92,7 @@ def _loads_json(raw: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Health: unauthenticated /relay/v2/health probe (httpx from the gateway env)
+# Health: unauthenticated /health probe (httpx from the gateway env)
 # ---------------------------------------------------------------------------
 
 _health_state: dict[str, tuple[float, dict]] = {}
