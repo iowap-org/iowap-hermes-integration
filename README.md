@@ -2,10 +2,29 @@
 
 A [Hermes desktop](https://hermes-agent.nousresearch.com) plugin that puts
 [IOWAP](https://github.com/iowap-org/iowap) fleet data into the desktop app:
-a statusbar chip (relay status, nodes online) and a fleet pane (node list
-with capabilities).
+
+- **Statusbar chip** — live dot + `N/M` nodes online, click opens the fleet page
+- **Fleet pane** (right zone, draggable) — compact node list
+- **Fleet page** (`/iowap-fleet`, sidebar nav + ⌘K) — full overview: status,
+  load, queue depth, capabilities per node
+- **⌘K commands** — refresh fleet data, notify fleet status, open the page
+
+## Architecture
+
+```
+desktop renderer (plugin.js)        gateway process (plugin_api.py)        relay
+┌─────────────────────┐   ctx.rest  ┌──────────────────────────┐  node-cli  ┌───────┐
+│ chip / pane / page  │ ──────────► │ /api/plugins/iowap/fleet │ ─────────► │ :8788 │
+└─────────────────────┘             └──────────────────────────┘            └───────┘
+```
+
+The desktop **frontend** never touches relay HTTP or tokens. The **backend**
+(`/api/plugins/iowap/*`) shells out to `node-cli --json`, which owns all relay
+auth and token handling (`~/.relay/*`). Relay tokens never enter the renderer.
 
 ## Install
+
+**Desktop half** (chip, pane, page, commands):
 
 ```bash
 mkdir -p ~/.hermes/desktop-plugins/iowap
@@ -13,29 +32,41 @@ curl -o ~/.hermes/desktop-plugins/iowap/plugin.js \
   https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/plugin.js
 ```
 
-Then run **Reload desktop plugins** from the ⌘K palette in the Hermes desktop
-app (the app also hot-reloads the file on every save while it exists).
+**Backend half** (fleet data through node-cli):
 
-The plugin id is `iowap` — the folder name must match it (SDK requirement).
+```bash
+mkdir -p ~/.hermes/plugins/iowap/dashboard
+curl -o ~/.hermes/plugins/iowap/dashboard/manifest.json \
+  https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/dashboard/manifest.json
+curl -o ~/.hermes/plugins/iowap/dashboard/plugin_api.py \
+  https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/dashboard/plugin_api.py
+hermes config set plugins.enabled '["iowap"]'
+```
+
+Requires `node-cli` (pip `iowap-node`) on the desktop host and a logged-in node
+state (`~/.relay/iowap-agent.*`). Then **restart the Hermes desktop app** (the
+backend imports live in the gateway process — a plugin reload is not enough the
+first time) and run **Reload desktop plugins** (⌘K) afterwards for frontend
+edits. Without the backend the UI degrades gracefully to an error hint.
+
+The plugin id is `iowap` — the desktop folder name must match it (SDK
+requirement). Enable the desktop half in **Capabilities → Plugins** if it
+stays off.
 
 ## Status
 
-**v0.1.0-skeleton** — chip + fleet pane placeholder. Live relay data arrives
-in T-002 via the plugin's Python backend (`plugin_api.py`), which shells out
-to `node-cli --json` — the desktop frontend never touches relay tokens or
-HTTP directly.
-
-Planned areas (see repo `PLAN.md` on the local project board):
-
-- Statusbar chip with live "N online" and health dot
-- Fleet pane: node list with capabilities, load, click-through details
-- ⌘K command: submit a small probe task to a named node
+**v0.2.0-fleet** — chip + pane + page + palette commands, live data via
+`node-cli`. The relay health probe is an unauthenticated `/health` GET.
+Per-node detail (`load_source`) distinguishes host-load (`loadavg`) from
+agent-scoped cgroup values — do not compare load numbers across nodes.
 
 ## Layout of this repo
 
 ```
-plugin.js     ← the whole plugin (copy to ~/.hermes/desktop-plugins/iowap/)
-README.md     ← this file
+plugin.js                   ← desktop half (→ ~/.hermes/desktop-plugins/iowap/)
+dashboard/manifest.json     ← backend manifest (→ ~/.hermes/plugins/iowap/dashboard/)
+dashboard/plugin_api.py     ← backend routes (→ ~/.hermes/plugins/iowap/dashboard/)
+README.md
 ```
 
 ## License
