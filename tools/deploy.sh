@@ -6,7 +6,7 @@
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-install -m 644 "$repo/plugin.js" "$HOME/.hermes/desktop-plugins/iowap/plugin.js"
+install -m 644 "$repo/desktop/plugin.js" "$HOME/.hermes/desktop-plugins/iowap/plugin.js"
 install -m 644 "$repo/dashboard/plugin_api.py" "$HOME/.hermes/plugins/iowap/dashboard/plugin_api.py"
 install -m 644 "$repo/dashboard/manifest.json" "$HOME/.hermes/plugins/iowap/dashboard/manifest.json"
 

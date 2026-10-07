@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
-const pluginSrc = readFileSync(join(repo, 'plugin.js'), 'utf8')
+const pluginSrc = readFileSync(join(repo, 'desktop', 'plugin.js'), 'utf8')
 
 // ---- stub the SDK ----------------------------------------------------------
 // React is required by the plugin's jsx factories; use the real one so element

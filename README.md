@@ -45,7 +45,7 @@ auth and token handling (`~/.relay/*`). Relay tokens never enter the renderer.
 ```bash
 mkdir -p ~/.hermes/desktop-plugins/iowap
 curl -o ~/.hermes/desktop-plugins/iowap/plugin.js \
-  https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/plugin.js
+  https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/desktop/plugin.js
 ```
 
 **Backend half** (fleet data through node-cli):
@@ -89,7 +89,7 @@ values — do not compare load numbers across nodes.
 ## Layout of this repo
 
 ```
-plugin.js                   ← desktop half (→ ~/.hermes/desktop-plugins/iowap/)
+desktop/plugin.js          ← desktop half (→ ~/.hermes/desktop-plugins/iowap/)
 dashboard/manifest.json     ← backend manifest (→ ~/.hermes/plugins/iowap/dashboard/)
 dashboard/plugin_api.py     ← backend routes (→ ~/.hermes/plugins/iowap/dashboard/)
 tests/                      ← pytest suite (track store, delegated rows, cache eviction)
