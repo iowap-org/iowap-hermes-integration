@@ -170,6 +170,48 @@ def _node_errors(errors: list[str]) -> list[str]:
     return errors
 
 
+def _normalize_fields(schema: dict | None) -> dict[str, dict]:
+    """Normalize a capability input schema to the dashboard field dialect.
+
+    Two dialects exist on the fleet (T-202, live-verified 2026-10-07):
+    - Relay-native: {"fields": {name: {name, type, required, description, …}}}
+      (felix-cyberfox profile, storage, bot-desktop, webstack).
+    - JSON-Schema:  {"type": "object", "properties": {name: {type,
+      description}}, "required": [...]} — what NovaForge heartbeats.
+
+    The TaskForm reader (plugin.js "TaskForm") only understands the relay
+    dialect, so JSON-Schema caps silently rendered an empty form. The server
+    stays dumb per the dumb-server doctrine — this consumer-side normalizer
+    maps the second dialect onto the first. Returns {} when the capability
+    genuinely takes no input (e.g. mc.list.players).
+    """
+    if not isinstance(schema, dict):
+        return {}
+    fields = schema.get("fields")
+    if isinstance(fields, dict):
+        return {k: v for k, v in fields.items() if isinstance(v, dict)}
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return {}
+    required = {
+        r for r in (schema.get("required") or [])
+        if isinstance(r, str)
+    }
+    out: dict[str, dict] = {}
+    for name, defn in props.items():
+        if not isinstance(defn, dict):
+            defn = {}
+        fdef: dict[str, Any] = {"name": name, "type": defn.get("type") or "string"}
+        if name in required:
+            fdef["required"] = True
+        if isinstance(defn.get("description"), str) and defn["description"]:
+            fdef["description"] = defn["description"]
+        if defn.get("default") is not None:
+            fdef["example"] = defn["default"]
+        out[name] = fdef
+    return out
+
+
 @router.get("/fleet")
 async def fleet() -> dict:
     """Full fleet snapshot: node list + capability map + relay health.
@@ -332,6 +374,9 @@ async def activity() -> dict:
         # Task-submit-worthy: standard submit path (capability:json stage).
         # 'native' caps are relay storage/admin ops — not submittable from here.
         selectable = cap_type in ("", "task", "ai", "tool", "workflow")
+        # T-202: normalize BOTH schema dialects (relay-native "fields" and the
+        # JSON-Schema dialect NovaForge heartbeats) to the TaskForm dialect.
+        fields = _normalize_fields(entry.get("input_schema"))
         caps.append({
             "name": entry["name"],
             "type": entry.get("type"),
