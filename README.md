@@ -6,8 +6,13 @@ A [Hermes desktop](https://hermes-agent.nousresearch.com) plugin that puts
 - **Statusbar chip** — live dot + `N/M` nodes online, click opens the fleet page
 - **Fleet pane** (right zone, draggable) — compact node list
 - **Fleet page** (`/iowap-fleet`, sidebar nav + ⌘K) — full overview: status,
-  load, queue depth, capabilities per node
-- **⌘K commands** — refresh fleet data, notify fleet status, open the page
+  load, queue depth, capabilities per node, plus an **Activity** section
+  (daemon self-sight, tracked tasks, task-capability provider health)
+- **Tasks page** (`/iowap-tasks`, sidebar nav + ⌘K) — submit a task to any
+  task-type capability (capability picker, JSON payload, optional name),
+  track an existing task by its relay id, and watch tracked tasks live
+  (per-stage status dots, result previews, artifacts)
+- **⌘K commands** — refresh fleet data, notify fleet status, open the pages
 
 ## Architecture
 
