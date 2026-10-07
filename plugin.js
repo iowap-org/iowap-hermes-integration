@@ -245,6 +245,7 @@ export default {
       const info = summaryOf(data)
       const nodes = workerNodes(data)
       const queueSum = nodes.reduce((a, n) => a + queueOf(n), 0)
+      const hl = healthLineOf(data?.health)
 
       return jsxs('div', {
         className: 'flex h-full flex-col gap-4 overflow-y-auto p-6 text-sm',
