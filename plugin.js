@@ -508,6 +508,18 @@ export default {
       })
     }
 
+    // form atoms — module scope: atoms created in a component body are
+    // re-created on EVERY render and reset instantly (select "didn't stick",
+    // advanced toggle "couldn't switch off"). Module scope survives renders
+    // and mounts alike.
+    const $cap = atom('')
+    const $name = atom('')
+    const $formErr = atom('')
+    const $trackId = atom('')
+    const $adv = atom(false)
+    const $raw = atom('{}')
+    const $vals = atom({})
+
     // -------------------------------------------------------------------
     // TaskForm: capability select (selectable only, type != native) +
     // plaintext fields from the capability's input_schema — payload JSON is
@@ -518,9 +530,6 @@ export default {
       const sel = caps.find(c => c.name === cap) || null
       const fields = sel && sel.fields && typeof sel.fields === 'object' ? Object.values(sel.fields) : []
 
-      const $adv = atom(false)
-      const $raw = atom('{}')
-      const $vals = atom({})
       const adv = useValue($adv)
       const rawTxt = useValue($raw)
       const vals = useValue($vals)
@@ -589,7 +598,7 @@ export default {
           jsxs('div', { className: 'flex items-center gap-2', children: [
             jsx(Switch, {
               id: 'iowap-adv', checked: !hasFields || adv,
-              onCheckedChange: v => $adv.set(v), size: 'xs'
+              onCheckedChange: v => $adv.set(v), size: 'xs', disabled: !hasFields
             }),
             jsx('label', { htmlFor: 'iowap-adv', className: 'text-xs text-(--ui-text-tertiary)', children: t('advJson') })
           ]}),
@@ -623,11 +632,6 @@ export default {
       const tasksQ = useTasks()
       const activityQ = useActivity()
 
-      // form atoms — fresh per mount; no SDK react hooks by design
-      const $cap = atom('')
-      const $name = atom('')
-      const $formErr = atom('')
-      const $trackId = atom('')
       const cap = useValue($cap)
       const nameTxt = useValue($name)
       const formErr = useValue($formErr)
