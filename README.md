@@ -48,6 +48,13 @@ curl -o ~/.hermes/plugins/iowap/dashboard/plugin_api.py \
 hermes config set plugins.enabled '["iowap"]'
 ```
 
+**Update an installed plugin** (this machine — from the repo):
+
+```bash
+tools/deploy.sh   # copies both halves, verifies md5; frontend hot-reloads,
+                  # backend edits need one app restart
+```
+
 Requires `node-cli` (pip `iowap-node`) on the desktop host and a logged-in node
 state (`~/.relay/iowap-agent.*`). Then **restart the Hermes desktop app** (the
 backend imports live in the gateway process — a plugin reload is not enough the
