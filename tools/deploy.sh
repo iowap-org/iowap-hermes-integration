@@ -12,7 +12,7 @@ install -m 644 "$repo/dashboard/manifest.json" "$HOME/.hermes/plugins/iowap/dash
 
 fail=0
 for pair in \
-  "$repo/plugin.js:$HOME/.hermes/desktop-plugins/iowap/plugin.js" \
+  "$repo/desktop/plugin.js:$HOME/.hermes/desktop-plugins/iowap/plugin.js" \
   "$repo/dashboard/plugin_api.py:$HOME/.hermes/plugins/iowap/dashboard/plugin_api.py" \
   "$repo/dashboard/manifest.json:$HOME/.hermes/plugins/iowap/dashboard/manifest.json"; do
   src="${pair%%:*}"; dst="${pair##*:}"
