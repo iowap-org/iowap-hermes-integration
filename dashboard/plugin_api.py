@@ -21,23 +21,32 @@ Additional endpoints (T-006):
   fleet-wide "has work right now" signal; node-cli has no task list endpoint,
   so per-task activity on remote nodes is NOT observable from here), local
   daemon status, local node identity.
-- GET /tasks     — status of tasks TRACKED BY THIS PLUGIN (submitted via
-  POST /tasks/submit, or added via POST /tasks/track). Task tracking is
-  opt-in because node-cli can only fetch task results whose owner identity
-  matches this node (server-side scoping on the result endpoint).
+- GET /tasks     — status of tasks TRACKED BY THIS PLUGIN. Tracking is opt-in
+  because node-cli can only fetch task results whose owner identity matches
+  this node (server-side T-005g scoping on the result endpoint).
+  Sources (v2): POST /tasks/submit (dashboard form), POST /tasks/track, and
+  the session-side bridge tools/iowap-task (agent sessions) — all merge into
+  the SAME flock-protected store (~/.hermes/cache/task-track-iowap.json,
+  {"ids": [...], "meta": {...}}). Owner-directed tasks (`--owner <node_id>`)
+  stay unreadable from this node BY DESIGN; they are tracked as `delegated`
+  rows (honest status "delegated" + note, 24h prune) instead of surfacing as
+  fetch_errors on every reload.
 - POST /tasks/submit — submit a single-stage task (capability + JSON payload)
   and track it.
-- POST /tasks/track — add an existing task_id to tracking.
+- POST /tasks/track — add an existing task_id to tracking; pass
+  {"delegated": true} for owner-scoped tasks to skip the fetchability check.
 """
 
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
 import shutil
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -450,37 +459,119 @@ _TASKS_TTL = 6 * 3600  # forget finished tasks after 6h
 _tasks_state: dict[str, tuple[float, dict]] = {}  # task_id -> (last_fetch_ts, result)
 
 
-def _tracked_list() -> list[str]:
-    """Task ids currently tracked — persisted in plugin storage dir."""
-    try:
-        with _TRACK_FILE.open("r", encoding="utf-8") as fh:
-            raw = json.load(fh)
-        ids = [t for t in (raw.get("ids") or []) if isinstance(t, str)]
-    except Exception:
-        return []
-    # prune finished + expired
-    now = time.monotonic()
-    keep = []
-    for tid in ids:
-        ent = _tasks_state.get(tid)
-        if ent and now - ent[0] > _TASKS_TTL and ent[1].get("task", {}).get("status") in (
-            "completed", "failed", "timed_out"
-        ):
-            continue
-        keep.append(tid)
-    return keep
-
-
 _TRACK_FILE = Path("/home/felix/.hermes/cache/task-track-iowap.json")
 
 
-def _track_file_write(ids: list[str]) -> None:
+@contextmanager
+def _track_file_lock(exclusive: bool):
+    """Open the track file under an flock (shared read / exclusive write).
+
+    The store is shared with the session-side submit bridge
+    (tools/iowap-task), which runs outside the gateway process and has no
+    access to backend memory — the file IS the interface between them.
+    """
+    _TRACK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not _TRACK_FILE.exists():
+        _TRACK_FILE.touch()
+    fh = _TRACK_FILE.open("r+" if exclusive else "r", encoding="utf-8")
     try:
-        _TRACK_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with _TRACK_FILE.open("w", encoding="utf-8") as fh:
-            json.dump({"ids": ids}, fh)
-    except Exception as exc:
-        log.warning("task track file write failed: %s", exc)
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        yield fh
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
+
+
+def _track_store_read() -> dict:
+    """Read the track store: {"ids": [...], "meta": {task_id: {...}, …}}.
+
+    Tolerates the legacy {"ids": [...]} layout (meta comes back empty) and
+    returns an empty store for unreadable content.
+    """
+    try:
+        with _track_file_lock(exclusive=False) as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
+        return {"ids": [], "meta": {}}
+    except Exception:
+        log.warning("iowap track file unreadable, treating as empty: %s", _TRACK_FILE)
+        return {"ids": [], "meta": {}}
+    if not isinstance(raw, dict):
+        return {"ids": [], "meta": {}}
+    ids = [t for t in (raw.get("ids") or []) if isinstance(t, str)]
+    meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+    return {"ids": ids, "meta": meta}
+
+
+_TRACK_META_MAX = 50  # tracking is capped to the newest 50 ids
+
+
+def _track_store_merge(tid: str, meta: dict | None = None) -> bool:
+    """Add/refresh one tracked id + meta under an exclusive flock.
+
+    New ids go to the front; the store holds at most _TRACK_META_MAX ids
+    (metadata of dropped ids is pruned with them). Returns True when the
+    id was newly added.
+    """
+    with _track_file_lock(exclusive=True) as fh:
+        try:
+            raw = json.load(fh)
+        except Exception:
+            raw = {}
+        ids = [t for t in (raw.get("ids") or []) if isinstance(t, str)]
+        meta_map = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+        added = tid not in ids
+        if added:
+            ids.insert(0, tid)
+            ids = ids[:_TRACK_META_MAX]
+        if meta:
+            meta_map = {**meta_map, tid: {**meta_map.get(tid, {}), **meta}}
+        live = set(ids)
+        meta_map = {k: v for k, v in meta_map.items() if k in live}
+        fh.seek(0)
+        fh.truncate()
+        json.dump({"ids": ids, "meta": meta_map}, fh)
+        return added
+
+
+def _track_store_write(ids: list[str], meta: dict | None = None) -> None:
+    """Full rewrite under an exclusive flock (used by the prune path)."""
+    with _track_file_lock(exclusive=True) as fh:
+        fh.seek(0)
+        fh.truncate()
+        json.dump({"ids": ids, "meta": meta or {}}, fh)
+
+
+def _tracked_list() -> list[str]:
+    """Ids currently tracked — prunes finished/expired/delegated-stale rows."""
+    store = _track_store_read()
+    meta = store["meta"]
+    now = time.monotonic()
+    now_wall = time.time()  # meta.submitted_at is wall clock (survives restarts)
+    keep = []
+    for tid in store["ids"]:
+        m = meta.get(tid) or {}
+        if m.get("delegated"):
+            # owner-scoped tasks are never fetchable from this node
+            # (server-side T-005g scoping) — drop once older than a day
+            try:
+                stale = now_wall - float(m.get("submitted_at", 0)) > 24 * 3600
+            except (TypeError, ValueError):
+                stale = False
+            if stale:
+                meta.pop(tid, None)
+                continue
+        else:
+            ent = _tasks_state.get(tid)
+            if ent and now - ent[0] > _TASKS_TTL and ent[1].get("task", {}).get("status") in (
+                "completed", "failed", "timed_out"
+            ):
+                meta.pop(tid, None)
+                continue
+        keep.append(tid)
+    if len(keep) != len(store["ids"]) or meta != store["meta"]:
+        _track_store_write(keep, meta)
+    return keep
 
 
 async def _fetch_task(task_id: str) -> dict:
@@ -573,9 +664,29 @@ async def tasks() -> dict:
     """Status of all tracked tasks, fetched concurrently, never raises."""
     started = time.monotonic()
     ids = _tracked_list()
+    store = _track_store_read()
+    meta = store["meta"]
     errors: list[str] = []
 
     async def _safe(tid: str) -> dict:
+        m = meta.get(tid) or {}
+        if m.get("delegated"):
+            # Owner-scoped tasks are intentionally unreadable from this node
+            # (server-side T-005g owner scoping) — render an honest
+            # placeholder row instead of a per-reload fetch_error.
+            return {
+                "task_id": tid,
+                "name": m.get("name") or m.get("capability") or "delegated task",
+                "status": "delegated",
+                "capability": m.get("capability"),
+                "owner_node_id": m.get("owner"),
+                "delegated": True,
+                "stages": [],
+                "artifacts": [],
+                "notes": [],
+                "note": ("result not readable from this node — owner-scoped "
+                         "(node-cli task result <id> on the owner, or ask the relay admin DB)"),
+            }
         try:
             data = await _fetch_task(tid)
             return _summarize_task(data)
@@ -631,27 +742,41 @@ async def tasks_submit(payload: dict) -> dict:
 
     task_id = data.get("task_id")
     if isinstance(task_id, str) and task_id:
-        ids = _tracked_list()
-        if task_id not in ids:
-            ids.insert(0, task_id)
-        _track_file_write(ids[:50])  # cap tracking to 50 newest
+        _track_store_merge(task_id, {
+            "capability": payload.get("capability"),
+            "name": (name.strip()[:120] if isinstance(name, str) and name.strip() else None),
+            "owner": owner.strip()[:32] if isinstance(owner, str) and owner.strip() else None,
+            "delegated": bool(isinstance(owner, str) and owner.strip()),
+            "submitted_at": time.time(),  # wall clock: survives gateway restarts
+        })
     return {"ok": True, "task_id": task_id, "status": data.get("status"),
             "capability": data.get("capability")}
 
 
 @router.post("/tasks/track")
 async def tasks_track(payload: dict) -> dict:
-    """Add an existing task_id to tracking. Body: {"task_id": str}."""
+    """Add an existing task_id to tracking. Body: {"task_id": str,
+    "capability"/"name"/"owner": optional meta, "delegated": bool}.
+
+    delegated=True skips the fetchability sanity check — owner-scoped tasks
+    are intentionally unreadable from this node (server-side T-005g scoping).
+    """
     tid = payload.get("task_id")
     if not isinstance(tid, str) or not tid.strip() or len(tid) > 64:
         return {"ok": False, "error": "task_id required"}
     tid = tid.strip()
-    try:
-        await _fetch_task(tid)  # sanity: must be fetchable
-    except Exception as exc:
-        return {"ok": False, "error": f"task not fetchable: {str(exc)[:200]}"}
-    ids = _tracked_list()
-    if tid not in ids:
-        ids.insert(0, tid)
-        _track_file_write(ids[:50])
+    delegated = payload.get("delegated") is True
+    if not delegated:
+        try:
+            await _fetch_task(tid)  # sanity: must be fetchable
+        except Exception as exc:
+            # maybe it became fetchable again / or it IS fetchable but stale
+            return {"ok": False, "error": f"task not fetchable: {str(exc)[:200]}"}
+    _track_store_merge(tid, {
+        "capability": payload.get("capability"),
+        "name": payload.get("name") if isinstance(payload.get("name"), str) else None,
+        "owner": payload.get("owner") if isinstance(payload.get("owner"), str) else None,
+        "delegated": delegated,
+        "submitted_at": time.time(),
+    })
     return {"ok": True, "task_id": tid}

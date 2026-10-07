@@ -11,7 +11,13 @@ A [Hermes desktop](https://hermes-agent.nousresearch.com) plugin that puts
 - **Tasks page** (`/iowap-tasks`, sidebar nav + ⌘K) — submit a task to any
   task-type capability (capability picker, JSON payload, optional name),
   track an existing task by its relay id, and watch tracked tasks live
-  (per-stage status dots, result previews, artifacts)
+  (per-stage status dots, result previews, artifacts). Tasks submitted from
+  agent sessions via `iowap-task submit` (repo `tools/iowap-task`, installed
+  at `~/.local/bin/iowap-task`) land in the same track store — the bridge
+  wraps `node-cli task submit` and merges into
+  `~/.hermes/cache/task-track-iowap.json`. Owner-directed tasks
+  (`--owner <node_id>`) show as `delegated` rows (result unreadable from
+  this node — server-side T-005g scoping) instead of fetch errors.
 - **⌘K commands** — refresh fleet data, notify fleet status, open the pages
 
 ## Architecture

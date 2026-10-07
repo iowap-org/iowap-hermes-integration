@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Session-side task submit+track bridge for the iowap desktop plugin.
+
+WHY THIS EXISTS (T-006-tracking v2, 2026-10-07):
+The dashboard plugin tracks tasks in a persistent store
+(~/.hermes/cache/task-track-iowap.json). Tasks submitted via the plugin's
+POST /tasks/submit are tracked automatically — but tasks submitted from an
+agent session with raw `node-cli task submit` were invisible to the plugin.
+This wrapper submits AND merges the task into the same flock-protected
+store the backend reads, so both worlds share one source of truth.
+
+USE THIS instead of raw `node-cli task submit` when you want the task to
+appear on the plugin's Tasks page. Output is node-cli's --json output,
+passed through unchanged.
+
+Fleet reality (T-005g): `--owner <node_id>` tasks are owner-scoped — the
+result is NOT readable from this node (404 on task result). They still get
+tracked, as `delegated` rows with sidecar metadata (capability/name/owner),
+until a 24h prune. Non-delegated tasks are sanity-checked via node-cli
+before tracking.
+
+Examples:
+  iowap-task submit --stage 'agent.ai:{"task":"..."}' --name my-job
+  iowap-task submit --stage 'mc.list.players:{}' --owner AMKJA9AE  # delegated
+  iowap-task track task_xXX [--delegated --capability code.ai --owner RYBFNMET]
+  iowap-task list
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+TRACK_FILE = Path.home() / ".hermes/cache/task-track-iowap.json"
+MAX_IDS = 50
+
+# same probe order as the backend (desktop gateway PATH is unreliable)
+_NODE_CLI_CANDIDATES = (
+    Path.home() / ".hermes/hermes-agent/venv/bin/node-cli",
+    Path.home() / ".local/bin/node-cli",
+    Path("/usr/local/bin/node-cli"),
+)
+
+
+def find_node_cli() -> str:
+    found = shutil.which("node-cli")
+    if found:
+        return found
+    for cand in _NODE_CLI_CANDIDATES:
+        if cand.exists():
+            return str(cand)
+    sys.exit("node-cli not found in PATH or known install locations")
+
+
+def node_cli_json(args: list[str], timeout: float = 30.0) -> dict:
+    out = subprocess.run(
+        [find_node_cli(), "--json", *args],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(
+            f"node-cli produced no JSON (rc={out.returncode}): {out.stderr[:200]}"
+        )
+
+
+def store_read() -> dict:
+    try:
+        with TRACK_FILE.open("r", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
+            try:
+                return json.load(fh)
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return {"ids": [], "meta": {}}
+
+
+def store_merge(tid: str, meta: dict | None = None) -> bool:
+    """Merge one id (+meta) under an exclusive flock — identical schema and
+    locking as dashboard/plugin_api._track_store_merge. Do not diverge."""
+    TRACK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with TRACK_FILE.open("a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            fh.seek(0)
+            try:
+                raw = json.load(fh)
+            except Exception:
+                raw = {}
+            ids = [t for t in (raw.get("ids") or []) if isinstance(t, str)]
+            meta_map = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+            added = tid not in ids
+            if added:
+                ids.insert(0, tid)
+                ids = ids[:MAX_IDS]
+            if meta:
+                meta_map = {**meta_map, tid: {**meta_map.get(tid, {}), **meta}}
+            live = set(ids)
+            meta_map = {k: v for k, v in meta_map.items() if k in live}
+            fh.seek(0)
+            fh.truncate()
+            json.dump({"ids": ids, "meta": meta_map}, fh)
+            fh.truncate()
+            return added
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def cmd_submit(a: argparse.Namespace) -> None:
+    args = ["task", "submit", "--stage", a.stage]
+    if a.name:
+        args += ["--name", a.name[:120]]
+    if a.priority is not None:
+        args += ["--priority", str(a.priority)]
+    if a.owner:
+        args += ["--owner", a.owner[:32]]
+    data = node_cli_json(args)
+    tid = data.get("task_id")
+    if isinstance(tid, str) and tid:
+        store_merge(tid, {
+            "capability": data.get("capability") or a.stage.split(":", 1)[0],
+            "name": a.name[:120] if a.name else None,
+            "owner": a.owner[:32] if a.owner else None,
+            "delegated": bool(a.owner),
+            "submitted_at": time.time(),
+        })
+    print(json.dumps(data, ensure_ascii=False))
+
+
+def cmd_track(a: argparse.Namespace) -> None:
+    delegated = a.delegated or bool(a.owner)
+    if not delegated:
+        # sanity: must be fetchable from this node identity
+        try:
+            node_cli_json(["task", "result", a.task_id], timeout=20.0)
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error":
+                f"task not fetchable — if this is an owner-scoped task, pass --delegated. {str(exc)[:160]}"}))
+            sys.exit(1)
+    store_merge(a.task_id, {
+        "capability": a.capability,
+        "name": a.name,
+        "owner": a.owner,
+        "delegated": delegated,
+        "submitted_at": time.time(),
+    })
+    print(json.dumps({"ok": True, "task_id": a.task_id, "delegated": delegated}))
+
+
+def cmd_list(_a: argparse.Namespace) -> None:
+    print(json.dumps(store_read(), ensure_ascii=False, indent=1))
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="iowap-task", description=__doc__.splitlines()[1] if __doc__ else None)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("submit", help="submit AND track (wraps node-cli task submit)")
+    s.add_argument("--stage", required=True, help="'<capability>:<json payload>'")
+    s.add_argument("--name")
+    s.add_argument("--priority", type=int)
+    s.add_argument("--owner", help="target node id — task becomes delegated (unreadable result)")
+    s.set_defaults(func=cmd_submit)
+
+    t = sub.add_parser("track", help="track an existing task id")
+    t.add_argument("task_id")
+    t.add_argument("--capability")
+    t.add_argument("--name")
+    t.add_argument("--owner", help="records the task as delegated")
+    t.add_argument("--delegated", action="store_true",
+                   help="owner-scoped task: skip the fetchability sanity check")
+    t.set_defaults(func=cmd_track)
+
+    l = sub.add_parser("list", help="print the shared track store")
+    l.set_defaults(func=cmd_list)
+
+    a = p.parse_args()
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()
