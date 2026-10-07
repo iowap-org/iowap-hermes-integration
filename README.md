@@ -1,7 +1,12 @@
 # IOWAP Hermes Integration
 
+**IOWAP** ([Infrastructure · Offloading · Workload Assignment
+Platform](https://github.com/iowap-org/iowap)) is a distributed capability
+framework: nodes claim what they can do, the relay connects them, and
+workloads get routed to whichever node actually has the capability.
+
 A [Hermes desktop](https://hermes-agent.nousresearch.com) plugin that puts
-[IOWAP](https://github.com/iowap-org/iowap) fleet data into the desktop app:
+IOWAP fleet data into the desktop app:
 
 - **Statusbar chip** — live dot + `N/M` nodes online, click opens the fleet page
 - **Fleet pane** (right zone, draggable) — compact node list
@@ -73,10 +78,13 @@ stays off.
 
 ## Status
 
-**v0.2.0-fleet** — chip + pane + page + palette commands, live data via
-`node-cli`. The relay health probe is an unauthenticated `/health` GET.
-Per-node detail (`load_source`) distinguishes host-load (`loadavg`) from
-agent-scoped cgroup values — do not compare load numbers across nodes.
+**v0.3.0** — chip + pane + fleet page + palette commands + **tasks page**
+(submit, track, delegated rows), live data via `node-cli`. Agent sessions
+join through the `iowap-task` bridge (repo `tools/`, installed at
+`~/.local/bin/iowap-task`) into a shared flock-protected track store. The
+relay health probe is an unauthenticated `/health` GET. Per-node detail
+(`load_source`) distinguishes host-load (`loadavg`) from agent-scoped cgroup
+values — do not compare load numbers across nodes.
 
 ## Layout of this repo
 
@@ -84,6 +92,9 @@ agent-scoped cgroup values — do not compare load numbers across nodes.
 plugin.js                   ← desktop half (→ ~/.hermes/desktop-plugins/iowap/)
 dashboard/manifest.json     ← backend manifest (→ ~/.hermes/plugins/iowap/dashboard/)
 dashboard/plugin_api.py     ← backend routes (→ ~/.hermes/plugins/iowap/dashboard/)
+tests/                      ← pytest suite (track store, delegated rows, cache eviction)
+tools/iowap-task            ← session bridge (→ ~/.local/bin/iowap-task)
+tools/deploy.sh             ← install both halves + md5 verify
 README.md
 ```
 
