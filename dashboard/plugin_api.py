@@ -571,6 +571,11 @@ def _tracked_list() -> list[str]:
         keep.append(tid)
     if len(keep) != len(store["ids"]) or meta != store["meta"]:
         _track_store_write(keep, meta)
+    # evict stale cache entries the store no longer tracks — _tasks_state is
+    # process-lifetime otherwise (full TaskViews leak until gateway restart)
+    if set(_tasks_state) - set(keep):
+        for dropped in set(_tasks_state) - set(keep):
+            _tasks_state.pop(dropped, None)
     return keep
 
 

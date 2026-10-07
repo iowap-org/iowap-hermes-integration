@@ -87,6 +87,17 @@ def test_delegated_kept_before_24h_even_unfetchable(track_file):
     assert plugin_api._tracked_list() == ["d1"]
 
 
+def test_tracked_list_evicts_stale_cache_entries(track_file):
+    # _tasks_state is process-lifetime otherwise: entries for ids the store
+    # pruned must be evicted on the next _tracked_list() sweep
+    plugin_api._track_store_merge("t1", {"submitted_at": time.time()})
+    plugin_api._tasks_state["t1"] = (time.monotonic(), {"task": {"status": "completed"}})
+    plugin_api._tasks_state["ghost"] = (time.monotonic(), {"task": {"status": "completed"}})
+    assert plugin_api._tracked_list() == ["t1"]
+    assert "ghost" not in plugin_api._tasks_state
+    assert "t1" in plugin_api._tasks_state  # still tracked → cache kept
+
+
 @pytest.mark.asyncio
 async def test_tasks_endpoint_renders_delegated_row(track_file, monkeypatch):
     plugin_api._track_store_merge("dX", {
