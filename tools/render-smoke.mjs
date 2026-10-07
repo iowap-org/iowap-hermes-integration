@@ -99,6 +99,7 @@ export const queryClient = { invalidateQueries: () => {} }
 export const atom = init => ({ get: () => init, set: () => {} })
 export const Input = 'Input'
 export const Textarea = 'Textarea'
+export const Switch = 'Switch'
 export const Select = 'Select'
 export const SelectContent = 'SelectContent'
 export const SelectItem = 'SelectItem'
@@ -218,8 +219,31 @@ try {
     daemon: { running: true, pid: 4242, heartbeat_status: 'ok', tasks_completed: 14, tasks_failed: 1 },
     local_node: { node_id: 'n0', node_name: 'E4W3CBWQ', node_role: 'node' },
     capabilities: [
-      { name: 'draft.ai', type: 'task', provider_count: 2, queues_total: 3, description: 'Writes draft sections.', providers: [{ node_id: 'n1', node_name: 'webstack', available: true, queues: [{ queue: 'q1', depth: 3 }] }, { node_id: 'n2', node_name: 'NovaForge', available: false, queues: [] }] },
-      { name: 'hermes-test.ai', type: 'task', provider_count: 1, queues_total: 0, description: 'Hermes connectivity test.', providers: [{ node_id: 'n0', node_name: 'E4W3CBWQ', available: false, queues: [] }] }
+      {
+        name: 'draft.ai', type: 'task', provider_count: 2, queues_total: 3, selectable: true,
+        description: 'Writes draft sections.',
+        fields: {
+          topic: { name: 'topic', type: 'string', required: true, description: 'Topic to draft, e.g. "release notes".' },
+          lines: { name: 'lines', type: 'number', required: false, description: 'How many lines, default 40, max 400.', example: 100 },
+          verbose: { name: 'verbose', type: 'boolean', required: false, description: 'Talk more.', example: false }
+        },
+        providers: [
+          { node_id: 'n1', node_name: 'webstack', available: true, queues: [{ queue: 'q1', depth: 3 }] },
+          { node_id: 'n2', node_name: 'NovaForge', available: false, queues: [] }
+        ]
+      },
+      {
+        name: 'hermes-test.ai', type: 'task', provider_count: 1, queues_total: 0, selectable: true,
+        description: 'Hermes connectivity test.',
+        fields: { task: { name: 'task', type: 'string', required: true, description: 'What to test.' } },
+        providers: [{ node_id: 'n0', node_name: 'E4W3CBWQ', available: false, queues: [] }]
+      },
+      {
+        name: 'backup.info', type: 'native', provider_count: 1, queues_total: 0, selectable: false,
+        description: 'Relay storage op — not submittable here.',
+        fields: {},
+        providers: [{ node_id: 'n1', node_name: 'webstack', available: true, queues: [] }]
+      }
     ]
   }
   for (const c of contributionsWithRender) renderContribution(c)

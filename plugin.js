@@ -17,6 +17,7 @@
 
 import {
   cn, haptic, host, Tip, Badge, Button, StatusDot, Input, Textarea,
+  Switch,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   icons, relativeTime,
   usePluginI18n, useValue, useQuery, useMutation, useQueryClient, queryClient, atom,
@@ -442,6 +443,180 @@ export default {
       })
     }
 
+    // -------------------------------------------------------------------
+    // Field helpers: live JSON preview from plaintext field values,
+    // plaintext input rows (string → Input, number → numeric Input,
+    // boolean → Switch, everything else → text).
+    // -------------------------------------------------------------------
+    function safeJson(v) {
+      try { return JSON.stringify(v, null, 2) } catch { return null }
+    }
+
+    function buildPreview(defs, vals) {
+      const out = {}
+      for (const f of defs) {
+        const v = vals[f.name]
+        if (v === undefined || v === '' || v === null) continue
+        if (f.type === 'number' || f.type === 'integer') out[f.name] = Number(v) || 0
+        else if (f.type === 'boolean') out[f.name] = v === true
+        else out[f.name] = String(v)
+      }
+      return out
+    }
+
+    function fieldControl(f, val, set) {
+      if (f.type === 'boolean') {
+        return jsx(Switch, {
+          id: `iowap-f-${f.name}`, checked: val === true,
+          onCheckedChange: v => set(v), size: 'xs'
+        })
+      }
+      const num = f.type === 'number' || f.type === 'integer'
+      return jsx(Input, {
+        id: `iowap-f-${f.name}`,
+        type: num ? 'number' : 'text',
+        inputMode: num ? 'numeric' : undefined,
+        value: val === undefined || val === null ? '' : String(val),
+        onChange: e => set(num ? e.target.value : e.target.value),
+        placeholder: f.example != null ? String(f.example) : undefined
+      })
+    }
+
+    function CapabilityFields({ defs, vals, $vals, t }) {
+      return jsxs('div', {
+        className: 'grid gap-2',
+        children: defs.map(f => {
+          const set = v => $vals.set({ ...vals, [f.name]: v })
+          return jsxs('div', { key: f.name, className: 'grid grid-cols-[130px_1fr] items-center gap-2', children: [
+            jsxs('label', {
+              htmlFor: `iowap-f-${f.name}`,
+              className: 'text-xs break-words',
+              children: [
+                f.name,
+                f.required ? jsx('span', { className: 'text-destructive', children: ' *' }) : null,
+                jsx('div', { className: 'text-[10px] font-normal text-(--ui-text-quaternary)', children: f.type || 'string' })
+              ]
+            }),
+            jsxs('div', { className: 'grid gap-0.5', children: [
+              fieldControl(f, vals[f.name], set),
+              f.description
+                ? jsx('div', { className: 'text-[10px] leading-snug text-(--ui-text-quaternary)', children: f.description })
+                : null
+            ]})
+          ]})
+        })
+      })
+    }
+
+    // -------------------------------------------------------------------
+    // TaskForm: capability select (selectable only, type != native) +
+    // plaintext fields from the capability's input_schema — payload JSON is
+    // GENERATED, not handwritten. "Advanced" toggle for raw JSON edits.
+    // -------------------------------------------------------------------
+    function TaskForm({ caps, cap, onCap, nameTxt, onName, onErr, onSubmit, submitting, err, t }) {
+      const activityQ = useActivity()
+      const sel = caps.find(c => c.name === cap) || null
+      const fields = sel && sel.fields && typeof sel.fields === 'object' ? Object.values(sel.fields) : []
+
+      const $adv = atom(false)
+      const $raw = atom('{}')
+      const $vals = atom({})
+      const adv = useValue($adv)
+      const rawTxt = useValue($raw)
+      const vals = useValue($vals)
+
+      // field defs sorted once per capability (stable key order)
+      const defs = (fields || [])
+        .filter(f => f && f.name)
+        .sort((a, b) => (a.required === b.required ? 0 : a.required ? -1 : 1))
+
+      function buildPayload() {
+        const out = {}
+        for (const f of defs) {
+          const v = vals[f.name]
+          if (v === undefined || v === '' || v === null) continue
+          let val = v
+          if (f.type === 'number' || f.type === 'integer') {
+            const n = Number(v)
+            if (!Number.isFinite(n)) { onErr(t('numErr', f.name)); return null }
+            val = n
+          } else if (f.type === 'boolean') {
+            val = v === true
+          } else {
+            val = String(v)
+          }
+          out[f.name] = val
+        }
+        if (!Object.keys(out).length && rawTxt.trim()) {
+          let p
+          try { p = JSON.parse(rawTxt) } catch { onErr(t('invalidJson')); return null }
+          if (!p || typeof p !== 'object' || Array.isArray(p)) { onErr(t('invalidJson')); return null }
+          return p
+        }
+        return out
+      }
+
+      const hasFields = defs.length > 0
+      return jsxs('div', {
+        className: 'flex flex-col gap-2',
+        children: [
+          jsx(Select, {
+            value: cap,
+            onValueChange: v => onCap(v),
+            children: [
+              jsx(SelectTrigger, { className: 'w-full', children: jsx(SelectValue, { placeholder: t('selectCap') }) }),
+              jsx(SelectContent, {
+                children: caps.map(c => jsx(SelectItem, {
+                  key: c.name, value: c.name,
+                  children: `${c.name} · ${providersShort(c.providers, t)}`
+                }))
+              })
+            ]
+          }),
+          (!caps.length && !activityQ.isLoading)
+            ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: t('noSubmitCaps') })
+            : null,
+          sel?.description
+            ? jsx('div', {
+                className: 'text-[11px] leading-relaxed text-(--ui-text-quaternary) break-words',
+                style: { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
+                children: sel.description
+              })
+            : null,
+          hasFields
+            ? jsx(CapabilityFields, { defs, vals, $vals, t })
+            : null,
+          jsxs('div', { className: 'flex items-center gap-2', children: [
+            jsx(Switch, {
+              id: 'iowap-adv', checked: !hasFields || adv,
+              onCheckedChange: v => $adv.set(v), size: 'xs'
+            }),
+            jsx('label', { htmlFor: 'iowap-adv', className: 'text-xs text-(--ui-text-tertiary)', children: t('advJson') })
+          ]}),
+          (adv || !hasFields)
+            ? jsx(Textarea, {
+                placeholder: "{}", spellCheck: false,
+                value: rawTxt, onChange: e => $raw.set(e.target.value),
+                className: 'min-h-16 font-mono text-xs'
+              })
+            : null,
+          hasFields && !adv
+            ? jsx('div', {
+                className: 'rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-fill-tertiary) p-2 font-mono text-[11px] text-(--ui-text-quaternary) break-words whitespace-pre-wrap',
+                children: safeJson(buildPreview(defs, vals)) || '{}'
+              })
+            : null,
+          jsx(Input, { placeholder: t('namePh'), value: nameTxt, onChange: e => onName(e.target.value) }),
+          err ? jsx('div', { className: 'text-xs text-destructive', children: err }) : null,
+          jsx(Button, {
+            onClick: () => { haptic('tap'); const body = buildPayload(); if (body) { onErr(''); onSubmit(body) } },
+            disabled: submitting || !caps.length,
+            children: submitting ? t('submitting') : t('submit')
+          })
+        ]
+      })
+    }
+
     function TasksPage() {
       const t = usePluginI18n(ID)
       const qc = useQueryClient()
@@ -450,17 +625,15 @@ export default {
 
       // form atoms — fresh per mount; no SDK react hooks by design
       const $cap = atom('')
-      const $payload = atom('{}')
       const $name = atom('')
       const $formErr = atom('')
       const $trackId = atom('')
       const cap = useValue($cap)
-      const payloadTxt = useValue($payload)
       const nameTxt = useValue($name)
       const formErr = useValue($formErr)
       const trackId = useValue($trackId)
 
-      const caps = (activityQ.data?.capabilities || []).filter(c => c.type === 'task')
+      const caps = (activityQ.data?.capabilities || []).filter(c => c.type !== 'native')
 
       const submit = useMutation({
         mutationFn: body => ctx.rest('/tasks/submit', { method: 'POST', body, timeoutMs: 35000 }),
@@ -468,7 +641,7 @@ export default {
           qc.invalidateQueries({ queryKey: TASK_KEY })
           if (res?.ok) {
             host.notify({ kind: 'info', message: t('submittedOk', res.task_id) })
-            $payload.set('{}'); $name.set(''); $formErr.set('')
+            $name.set(''); $formErr.set('')
           } else {
             host.notify({ kind: 'error', message: t('submitErr', res?.error || '?') })
           }
@@ -484,15 +657,6 @@ export default {
         },
         onError: e => host.notify({ kind: 'error', message: t('trackErr', e?.message || String(e)) })
       })
-
-      function doSubmit() {
-        let body
-        try { body = JSON.parse(payloadTxt) } catch { $formErr.set(t('invalidJson')); return }
-        if (!cap) { $formErr.set(t('pickCap')); return }
-        if (body === null || typeof body !== 'object' || Array.isArray(body)) { $formErr.set(t('invalidJson')); return }
-        $formErr.set('')
-        submit.mutate({ capability: cap, payload: body, name: nameTxt.trim() || undefined, priority: 0 })
-      }
 
       const tasks = tasksQ.data?.tasks || []
       const busy = tasks.some(x => !['completed', 'failed', 'timed_out'].includes(x.status))
@@ -515,46 +679,19 @@ export default {
           }),
 
           // --- submit form ---
-          jsxs('div', {
-            className: 'flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary) p-3',
-            children: [
-              jsx('div', { className: 'text-xs font-medium text-(--ui-text-tertiary)', children: t('submitTitle') }),
-              jsx(Select, {
-                value: cap,
-                onValueChange: v => $cap.set(v),
-                children: [
-                  jsx(SelectTrigger, { className: 'w-full', children: jsx(SelectValue, { placeholder: t('selectCap') }) }),
-                  jsx(SelectContent, {
-                    children: caps.map(c => jsx(SelectItem, {
-                      key: c.name, value: c.name,
-                      children: `${c.name} · ${providersShort(c.providers, t)}`
-                    }))
-                  })
-                ]
-              }),
-              jsx(Textarea, {
-                placeholder: '{ … }',
-                spellCheck: false,
-                value: payloadTxt,
-                onChange: e => $payload.set(e.target.value),
-                className: 'min-h-16 font-mono text-xs'
-              }),
-              jsx(Input, {
-                placeholder: t('namePh'),
-                value: nameTxt,
-                onChange: e => $name.set(e.target.value)
-              }),
-              formErr ? jsx('div', { className: 'text-xs text-destructive', children: formErr }) : null,
-              jsx(Button, {
-                onClick: () => { haptic('tap'); doSubmit() },
-                disabled: submit.isPending || !caps.length,
-                children: submit.isPending ? t('submitting') : t('submit')
-              }),
-              !caps.length && !activityQ.isLoading
-                ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: t('noSubmitCaps') })
-                : null
-            ]
-          }),
+      jsxs('div', {
+        className: 'flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary) p-3',
+        children: [
+          jsx('div', { className: 'text-xs font-medium text-(--ui-text-tertiary)', children: t('submitTitle') }),
+          jsx(TaskForm, {
+            caps, cap, onCap: v => $cap.set(v), nameTxt, onName: v => $name.set(v),
+            onErr: m => $formErr.set(m), onSubmit: body => submit.mutate({
+              capability: cap, payload: body, name: nameTxt.trim() || undefined, priority: 0
+            }),
+            submitting: submit.isPending, err: formErr, t
+          })
+        ]
+      }),
 
           // --- track by id ---
           jsxs('div', {
@@ -667,6 +804,8 @@ export default {
         namePh: 'name (optional)',
         invalidJson: 'payload is not valid JSON (object expected)',
         pickCap: 'pick a capability first',
+        numErr: name => `field '${name}' needs a number`,
+        advJson: 'advanced: edit JSON directly',
         submit: 'Submit',
         submitting: 'submitting…',
         submittedOk: tid => `submitted ${tid}`,
@@ -714,6 +853,8 @@ export default {
         namePh: 'Name (optional)',
         invalidJson: 'Payload ist kein valides JSON (Objekt erwartet)',
         pickCap: 'erst eine Capability wählen',
+        numErr: name => `Feld '${name}' braucht eine Zahl`,
+        advJson: 'Erweitert: JSON direkt bearbeiten',
         submit: 'Einreichen',
         submitting: 'reiche ein…',
         submittedOk: tid => `eingereicht ${tid}`,

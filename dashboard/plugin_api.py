@@ -328,11 +328,16 @@ async def activity() -> dict:
                 "load": n.get("load") if isinstance(n.get("load"), (int, float)) else None,
             })
         fields = (entry.get("input_schema") or {}).get("fields") if isinstance(entry.get("input_schema"), dict) else None
+        cap_type = entry.get("type") or ""
+        # Task-submit-worthy: standard submit path (capability:json stage).
+        # 'native' caps are relay storage/admin ops — not submittable from here.
+        selectable = cap_type in ("", "task", "ai", "tool", "workflow")
         caps.append({
             "name": entry["name"],
             "type": entry.get("type"),
             "description": (entry.get("description") or "")[:220],
             "version": entry.get("version"),
+            "selectable": selectable,
             "providers": providers,
             "provider_count": len(providers),
             "available": bool(entry.get("available")),
