@@ -3,7 +3,8 @@
 
 WHY THIS EXISTS (T-006-tracking v2, 2026-10-07):
 The dashboard plugin tracks tasks in a persistent store
-(~/.hermes/cache/task-track-iowap.json). Tasks submitted via the plugin's
+(~/.hermes/plugin-data/iowap/task-track-iowap.json — the backend's
+hermes-home plugin-data dir). Tasks submitted via the plugin's
 POST /tasks/submit are tracked automatically — but tasks submitted from an
 agent session with raw `node-cli task submit` were invisible to the plugin.
 This wrapper submits AND merges the task into the same flock-protected
@@ -31,13 +32,28 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-TRACK_FILE = Path.home() / ".hermes/cache/task-track-iowap.json"
+
+def _hermes_home() -> Path:
+    """Hermes home dir — mirrors the backend's hermes_constants.get_hermes_home().
+
+    The bridge runs in standalone sessions without the gateway env, so that
+    import is not guaranteed here; HERMES_HOME (set by hermes sessions) wins,
+    then ~/.hermes.
+    """
+    env_home = os.environ.get("HERMES_HOME", "").strip()
+    return Path(env_home) if env_home else Path.home() / ".hermes"
+
+
+TRACK_FILE = (
+    _hermes_home() / "plugin-data" / "iowap" / "task-track-iowap.json"
+)
 MAX_IDS = 50
 
 # same probe order as the backend (desktop gateway PATH is unreliable)

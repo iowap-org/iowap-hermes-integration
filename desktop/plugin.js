@@ -206,6 +206,54 @@ export default {
       })
     }
 
+    // Onboarding card: plugin installed, but no IOWAP node setup on this host.
+    // Rendered by the fleet pane/page and the tasks page when the backend's
+    // setup gate short-circuits (catalog review follow-up: catalog users get
+    // guidance instead of probe error noise).
+    function SetupNotice({ setup }) {
+      const t = usePluginI18n(ID)
+      const repos = setup?.repos || {}
+      return jsxs('div', {
+        className: cn(
+          'flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary)',
+          'p-4 text-sm'
+        ),
+        children: [
+          jsxs('div', { className: 'flex items-center gap-2', children: [
+            jsx(StatusDot, { tone: 'warn' }),
+            jsx('span', { className: 'font-medium', children: t('setupTitle') })
+          ]}),
+          jsx('div', { className: 'text-(--ui-text-tertiary)', children: t('setupWhat') }),
+          (setup?.reasons || []).length
+            ? jsx('div', {
+                className: 'flex flex-col gap-1 text-xs text-destructive',
+                children: setup.reasons.map((r, i) =>
+                  jsx('div', { key: i, children: '⚠ ' + r }))
+              })
+            : null,
+          jsxs('div', { className: 'flex flex-col gap-1 text-xs text-(--ui-text-tertiary)', children: [
+            jsx('div', { className: 'font-medium', children: t('setupFix') }),
+            jsx('div', { children: t('setupStep1') }),
+            jsx('div', { children: t('setupStep2') }),
+            jsx('div', { children: t('setupStep3') })
+          ]}),
+          jsxs('div', { className: 'flex items-center gap-3 text-xs', children: [
+            jsx('span', { className: 'text-(--ui-text-tertiary)', children: t('setupDocs') + ':' }),
+            repos.node ? jsx('a', {
+              href: repos.node, target: '_blank', rel: 'noreferrer',
+              className: 'underline underline-offset-2',
+              children: 'iowap-org/iowap-node'
+            }) : null,
+            repos.overview ? jsx('a', {
+              href: repos.overview, target: '_blank', rel: 'noreferrer',
+              className: 'underline underline-offset-2',
+              children: 'iowap-org/iowap'
+            }) : null
+          ]})
+        ]
+      })
+    }
+
     function FleetPane() {
       const t = usePluginI18n(ID)
       const { data, isError, error, isFetching } = useFleet()
@@ -229,6 +277,7 @@ export default {
             ]
           }),
           hl ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary) truncate', children: hl }) : null,
+          data?.setup ? jsx(SetupNotice, { setup: data.setup }) : null,
           jsxs('div', {
             className: 'min-h-0 flex-1 overflow-y-auto',
             children: [
@@ -329,6 +378,7 @@ export default {
                 children: t('loadErr') + ': ' + (error?.message || String(error || '')) + ' — ' + t('enableHint')
               })
             : null,
+          data?.setup ? jsx(SetupNotice, { setup: data.setup }) : null,
           info.errors.length
             ? jsxs('div', {
                 className: 'rounded-lg border border-(--ui-stroke-secondary) p-4 text-xs',
@@ -740,6 +790,7 @@ export default {
                 children: t('loadErr') + ': ' + (tasksQ.error?.message || String(tasksQ.error || '')) + ' — ' + t('enableHint')
               })
             : null,
+          tasksQ.data?.setup ? jsx(SetupNotice, { setup: tasksQ.data.setup }) : null,
           jsx('div', { className: 'text-[11px] text-(--ui-text-quaternary)', children: t('tasksScope') })
         ]
       })
@@ -823,7 +874,14 @@ export default {
         activityTitle: 'Activity',
         daemonSelf: tid => `daemon off (completed ${tid})`,
         localNode: 'local node',
-        capabilities: 'capabilities'
+        capabilities: 'capabilities',
+        setupTitle: 'IOWAP: no node setup on this host',
+        setupWhat: 'This plugin renders your IOWAP fleet via node-cli on this machine. It is installed, but this host has no node framework or registered node yet — so there is nothing to show.',
+        setupFix: 'Fix it (2 steps):',
+        setupStep1: '1. Install the node framework: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
+        setupStep2: '2. Register against a relay: node-cli node register --base-url <relay-url>',
+        setupStep3: '3. Reload this app — the fleet view appears automatically.',
+        setupDocs: 'Docs'
       },
       de: {
         paneTitle: 'IOWAP Fleet',
@@ -872,7 +930,14 @@ export default {
         activityTitle: 'Aktivität',
         daemonSelf: tid => `Daemon aus (abgeschlossen ${tid})`,
         localNode: 'lokaler Node',
-        capabilities: 'Capabilities'
+        capabilities: 'Capabilities',
+        setupTitle: 'IOWAP: kein Node-Setup auf diesem Host',
+        setupWhat: 'Dieses Plugin rendert dein IOWAP-Fleet via node-cli auf dieser Maschine. Es ist installiert, aber dieser Host hat weder Node-Framework noch registrierten Node — daher gibt es hier nichts anzuzeigen.',
+        setupFix: 'So gehts (2 Schritte):',
+        setupStep1: '1. Node-Framework installieren: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
+        setupStep2: '2. Gegen ein Relay registrieren: node-cli node register --base-url <relay-url>',
+        setupStep3: '3. App neu laden — die Fleet-Ansicht erscheint automatisch.',
+        setupDocs: 'Docs'
       }
     })
 

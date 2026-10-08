@@ -1,4 +1,5 @@
 .hermes/
 *.log
 .DS_Store
-node_modules/dashboard/__pycache__/
+__pycache__/
+*.pyc

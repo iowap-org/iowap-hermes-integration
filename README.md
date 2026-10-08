@@ -20,7 +20,7 @@ IOWAP fleet data into the desktop app:
   agent sessions via `iowap-task submit` (repo `tools/iowap-task`, installed
   at `~/.local/bin/iowap-task`) land in the same track store — the bridge
   wraps `node-cli task submit` and merges into
-  `~/.hermes/cache/task-track-iowap.json`. Owner-directed tasks
+  `~/.hermes/plugin-data/iowap/task-track-iowap.json`. Owner-directed tasks
   (`--owner <node_id>`) show as `delegated` rows (result unreadable from
   this node — server-side T-005g scoping) instead of fetch errors.
 - **⌘K commands** — refresh fleet data, notify fleet status, open the pages
@@ -39,6 +39,34 @@ The desktop **frontend** never touches relay HTTP or tokens. The **backend**
 auth and token handling (`~/.relay/*`). Relay tokens never enter the renderer.
 
 ## Install
+
+Install straight from the plugin catalog:
+
+```bash
+hermes plugins install iowap
+```
+
+Updates land through the same channel — the catalog keeps a pinned
+version and `hermes plugins update iowap` pulls it:
+
+```bash
+hermes plugins update iowap
+```
+
+Requires the **node-cli** from the
+[iowap-node](https://github.com/iowap-org/iowap-node) framework on the
+desktop host (it is not a PyPI package — install with
+`git clone https://github.com/iowap-org/iowap-node && pip install -e .`)
+and a logged-in node state (`~/.relay/iowap-agent.*`). Then **restart the
+Hermes desktop app** (the backend imports live in the gateway process — a
+plugin reload is not enough the first time) and run **Reload desktop
+plugins** (⌘K) afterwards for frontend edits. Without the backend the UI
+degrades gracefully to an onboarding hint.
+
+## Install from source (dev)
+
+For repo checkouts and development — catalog users don't need this
+section.
 
 **Desktop half** (chip, pane, page, commands):
 
@@ -65,12 +93,6 @@ hermes config set plugins.enabled '["iowap"]'
 tools/deploy.sh   # copies both halves, verifies md5; frontend hot-reloads,
                   # backend edits need one app restart
 ```
-
-Requires `node-cli` (pip `iowap-node`) on the desktop host and a logged-in node
-state (`~/.relay/iowap-agent.*`). Then **restart the Hermes desktop app** (the
-backend imports live in the gateway process — a plugin reload is not enough the
-first time) and run **Reload desktop plugins** (⌘K) afterwards for frontend
-edits. Without the backend the UI degrades gracefully to an error hint.
 
 The plugin id is `iowap` — the desktop folder name must match it (SDK
 requirement). Enable the desktop half in **Capabilities → Plugins** if it

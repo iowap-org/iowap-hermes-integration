@@ -4,9 +4,10 @@ Mounted at /api/plugins/iowap/* inside the Hermes gateway process. The desktop
 renderer reaches it via ctx.rest('/fleet') from plugin.js — see the SDK docs.
 
 Design rules (see repo README):
-- node-cli (installed pip package `iowap-node`) is the ONLY relay client here.
-  It owns auth, token refresh and token files (~/.relay/*); this backend never
-  reads tokens, never talks raw HTTP to the relay.
+- node-cli (from github.com/iowap-org/iowap-node — clone + `pip install -e .`;
+  NOT on PyPI despite the earlier comment's claim) is the ONLY relay client
+  here. It owns auth, token refresh and token files (~/.relay/*); this
+  backend never reads tokens, never talks raw HTTP to the relay.
 - node-cli is invoked with the global --json flag *before* the subcommand
   (root-level flag; `node-cli update check --json` fails with
   "unrecognized arguments" — same class of pitfall).
@@ -26,7 +27,8 @@ Additional endpoints (T-006):
   this node (server-side T-005g scoping on the result endpoint).
   Sources (v2): POST /tasks/submit (dashboard form), POST /tasks/track, and
   the session-side bridge tools/iowap-task (agent sessions) — all merge into
-  the SAME flock-protected store (~/.hermes/cache/task-track-iowap.json,
+  the SAME flock-protected store (~/.hermes/plugin-data/iowap/
+  task-track-iowap.json,
   {"ids": [...], "meta": {...}}). Owner-directed tasks (`--owner <node_id>`)
   stay unreadable from this node BY DESIGN; they are tracked as `delegated`
   rows (honest status "delegated" + note, 24h prune) instead of surfacing as
@@ -53,9 +55,82 @@ from typing import Any
 
 from fastapi import APIRouter
 
+try:  # hermes_constants exists when loaded inside the Hermes gateway; the
+    # pytest suite imports this module standalone without that package.
+    from hermes_constants import get_hermes_home
+except ImportError:  # pragma: no cover — standalone test/import context
+    def get_hermes_home():
+        import os
+        return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+
 log = logging.getLogger("iowap.api")
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Setup classification — is there an IOWAP setup on this host at all?
+# ---------------------------------------------------------------------------
+
+_SETUP_TTL = 60.0
+_setup_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _check_setup(force: bool = False) -> dict:
+    """Classify the desktop host's IOWAP readiness (cached 60s).
+
+    The catalog ships this plugin to machines with no IOWAP installation at
+    all: without this classification every UI surface degrades into
+    subprocess error noise. readiness here = node-cli available AND a
+    registered node state exists. Read-only checks, no subprocess spawn.
+    """
+    now = time.monotonic()
+    cached = _setup_cache.get("v")
+    if cached and not force and now - cached[0] < _SETUP_TTL:
+        return cached[1]
+
+    home = Path.home()
+    cli = shutil.which("node-cli")
+    if not cli:
+        # The desktop-spawned gateway does not inherit the login-shell PATH —
+        # probe the known venv/bin locations explicitly.
+        for cand in (
+            home / ".hermes/hermes-agent/venv/bin/node-cli",
+            home / ".local/bin/node-cli",
+            Path("/usr/local/bin/node-cli"),
+        ):
+            if cand.is_file() and os.access(cand, os.X_OK):
+                cli = str(cand)
+                break
+
+    state_path = home / ".relay" / "iowap-agent.json"
+    has_state = state_path.is_file()
+
+    reasons: list[str] = []
+    if not cli:
+        reasons.append(
+            "node-cli not found on this host — install the node framework "
+            "(https://github.com/iowap-org/iowap-node)"
+        )
+    if not has_state:
+        reasons.append(
+            "no registered node state (~/.relay/iowap-agent.json) — register "
+            "against a relay with `node-cli node register` "
+            "(https://github.com/iowap-org/iowap-node#quick-start)"
+        )
+
+    result = {
+        "ready": bool(cli and has_state),
+        "node_cli": cli,
+        "node_state": has_state,
+        "reasons": reasons,
+        "repos": {
+            "overview": "https://github.com/iowap-org/iowap",
+            "node": "https://github.com/iowap-org/iowap-node",
+            "relay": "https://github.com/iowap-org/iowap-server",
+        },
+    }
+    _setup_cache["v"] = (now, result)
+    return result
 
 # ---------------------------------------------------------------------------
 # node-cli discovery / execution
@@ -66,8 +141,8 @@ router = APIRouter()
 # PATH resolution unavailable; keeping inherited PATH"), so shutil.which()
 # alone finds nothing there — resolution must not depend on the ambient PATH.
 _NODE_CLI_CANDIDATES = (
-    "/home/felix/.hermes/hermes-agent/venv/bin/node-cli",
-    "/home/felix/.local/bin/node-cli",
+    Path.home() / ".hermes/hermes-agent/venv/bin/node-cli",
+    Path.home() / ".local/bin/node-cli",
     "/usr/local/bin/node-cli",
 )
 
@@ -79,7 +154,7 @@ def _resolve_node_cli() -> str:
     # Also probe inside known venvs' bin dirs that may not be on PATH.
     for cand in _NODE_CLI_CANDIDATES:
         if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            return cand
+            return str(cand)
     return "node-cli"  # let create_subprocess_exec raise a clear error
 
 
@@ -94,12 +169,13 @@ async def _run_node_cli(args: list[str], timeout: float = 20.0, ok: tuple[int, .
     env = dict(os.environ)
     # Guarantee the venv bin dir is visible to node-cli itself (e.g. for
     # sub-spawns), regardless of how empty the desktop-spawned PATH is.
-    venv_bin = "/home/felix/.hermes/hermes-agent/venv/bin"
-    if os.path.isdir(venv_bin) and venv_bin not in env.get("PATH", ""):
-        env["PATH"] = env.get("PATH", "") + os.pathsep + venv_bin
+    venv_bin = Path.home() / ".hermes/hermes-agent/venv/bin"
+    vb = str(venv_bin)
+    if os.path.isdir(vb) and vb not in env.get("PATH", ""):
+        env["PATH"] = env.get("PATH", "") + os.pathsep + vb
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        cwd="/home/felix",  # never an iowap checkout (nodes/ shadow pitfall)
+        cwd=str(Path.home()),  # never an iowap checkout (nodes/ shadow pitfall)
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -137,7 +213,8 @@ async def _relay_health() -> dict:
         return cached[1]
 
     base = None
-    cfg_path = "/home/felix/.relay/iowap-agent.json"
+    home = Path.home()
+    cfg_path = str(home / ".relay" / "iowap-agent.json")
     try:
         with open(cfg_path, "r", encoding="utf-8") as fh:
             meta = json.load(fh)
@@ -145,7 +222,16 @@ async def _relay_health() -> dict:
     except Exception:
         base = None
     if not base:
-        base = "http://192.168.2.60:8788"  # documented relay address
+        # No fallback probe: a foreign host must not get this machine's LAN
+        # address (catalog review finding #2) — health stays None and the
+        # UI renders its "relay not configured" state instead.
+        data: dict = {
+            "error": "relay not configured — no base_url in " + cfg_path,
+            "url": None,
+            "setup": _check_setup(),
+        }
+        _health_state["v"] = (now, data)
+        return data
 
     url = f"{base}/health"
     try:
@@ -230,6 +316,21 @@ async def fleet() -> dict:
     process — a CLI probe never disturbs it). Never raises: errors are reported
     per source so the UI can keep rendering with warnings.
     """
+    # --- setup gate: no IOWAP on this host → short-circuit with guidance -----
+    setup = _check_setup()
+    if not setup["ready"]:
+        return {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "backend": "node-cli",
+            "setup": setup,
+            "nodes": [],
+            "capability_map": {},
+            "health": None,
+            "errors": [],
+            "elapsed_ms": 0,
+            "short_circuited": True,
+        }
+
     started = time.monotonic()
 
     # --- source 1: node list (fast, single call) ------------------------------
@@ -354,6 +455,21 @@ async def activity() -> dict:
     started = time.monotonic()
     errors: list[str] = []
 
+    # --- setup gate: unconfigured host → guidance instead of probe noise -----
+    setup = _check_setup()
+    if not setup["ready"]:
+        return {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "capabilities": [],
+            "local_node": None,
+            "daemon": {},
+            "tracked_count": 0,
+            "errors": [],
+            "setup": setup,
+            "elapsed_ms": 0,
+            "short_circuited": True,
+        }
+
     # --- capability instances from the server -------------------------------
     try:
         raw = await _run_node_cli(["capabilities", "server"], timeout=25.0)
@@ -425,8 +541,10 @@ async def activity() -> dict:
 
     # --- local node identity (read-only json file, no tokens) ----------------
     local_node = None
+    home = Path.home()
+    state_path = home / ".relay" / "iowap-agent.json"
     try:
-        with open("/home/felix/.relay/iowap-agent.json", "r", encoding="utf-8") as fh:
+        with open(state_path, "r", encoding="utf-8") as fh:
             meta = json.load(fh)
         local_node = {"node_id": meta.get("node_id"), "node_name": meta.get("node_name")}
     except Exception:
@@ -459,7 +577,9 @@ _TASKS_TTL = 6 * 3600  # forget finished tasks after 6h
 _tasks_state: dict[str, tuple[float, dict]] = {}  # task_id -> (last_fetch_ts, result)
 
 
-_TRACK_FILE = Path("/home/felix/.hermes/cache/task-track-iowap.json")
+_TRACK_FILE = (
+    get_hermes_home() / "plugin-data" / "iowap" / "task-track-iowap.json"
+)
 
 
 @contextmanager
@@ -672,6 +792,18 @@ async def tasks() -> dict:
     store = _track_store_read()
     meta = store["meta"]
     errors: list[str] = []
+
+    # --- setup gate: unconfigured host → guidance instead of probe noise -----
+    setup = _check_setup()
+    if not setup["ready"]:
+        return {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "tasks": [],
+            "errors": [],
+            "setup": setup,
+            "elapsed_ms": 0,
+            "short_circuited": True,
+        }
 
     async def _safe(tid: str) -> dict:
         m = meta.get(tid) or {}
