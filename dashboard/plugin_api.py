@@ -264,9 +264,10 @@ def _normalize_fields(schema: dict | None) -> dict[str, dict]:
 
     Two dialects exist on the fleet (T-202, live-verified 2026-10-07):
     - Relay-native: {"fields": {name: {name, type, required, description, …}}}
-      (felix-cyberfox profile, storage, bot-desktop, webstack).
+      — what most nodes emit (e.g. Node-23A).
     - JSON-Schema:  {"type": "object", "properties": {name: {type,
-      description}}, "required": [...]} — what NovaForge heartbeats.
+      description}}, "required": [...]} — what JSON-Schema-speaking nodes
+      emit (e.g. Node-31B).
 
     The TaskForm reader (plugin.js "TaskForm") only understands the relay
     dialect, so JSON-Schema caps silently rendered an empty form. The server
@@ -494,7 +495,7 @@ async def activity() -> dict:
         # 'native' caps are relay storage/admin ops — not submittable from here.
         selectable = cap_type in ("", "task", "ai", "tool", "workflow")
         # T-202: normalize BOTH schema dialects (relay-native "fields" and the
-        # JSON-Schema dialect NovaForge heartbeats) to the TaskForm dialect.
+        # JSON-Schema dialect some nodes emit) to the TaskForm dialect.
         fields = _normalize_fields(entry.get("input_schema"))
         caps.append({
             "name": entry["name"],

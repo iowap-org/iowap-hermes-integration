@@ -195,8 +195,8 @@ try {
     generated_at: new Date().toISOString(),
     backend: 'node-cli',
     nodes: [
-      { node_id: 'n1', node_name: 'webstack', role: 'node', status: 'online', load: 0.42, load_source: 'cgroup2', queue_depth: 0, busy: false, last_seen: new Date().toISOString(), available: true, capabilities: [{ name: 'chat.ai' }, { name: 'web.ai' }] },
-      { node_id: 'n2', node_name: 'NovaForge', role: 'node', status: 'online', load: 2.9, load_source: 'loadavg', queue_depth: 1, busy: true, last_seen: new Date().toISOString(), available: true, capabilities: [{ name: 'tts.ai' }] },
+      { node_id: 'n1', node_name: 'Node-41C', role: 'node', status: 'online', load: 0.42, load_source: 'cgroup2', queue_depth: 0, busy: false, last_seen: new Date().toISOString(), available: true, capabilities: [{ name: 'chat.ai' }, { name: 'web.ai' }] },
+      { node_id: 'n2', node_name: 'Node-31B', role: 'node', status: 'online', load: 2.9, load_source: 'loadavg', queue_depth: 1, busy: true, last_seen: new Date().toISOString(), available: true, capabilities: [{ name: 'tts.ai' }] },
       { node_id: 'n3', node_name: 'Dashboard Admin', role: 'admin', status: 'online', load: null, load_source: null, queue_depth: null, busy: false, last_seen: null, available: true, capabilities: [] }
     ],
     capability_map: { n1: ['chat.ai'], n2: ['tts.ai'] },
@@ -215,7 +215,7 @@ try {
   globalThis.__TASKS_DATA__ = {
     generated_at: new Date().toISOString(),
     tasks: [
-      { task_id: 'task_x1', name: 'T-006-plugin-smoke', status: 'completed', priority: 0, stages: [{ stage_id: 's1', capability: 'hermes-test.ai', status: 'completed', result_preview: 'ok', retry_count: 0, claimed_by: 'E4W3CBWQ' }], error: null, artifacts: [{ name: 'out.txt' }] },
+      { task_id: 'task_x1', name: 'T-006-plugin-smoke', status: 'completed', priority: 0, stages: [{ stage_id: 's1', capability: 'hermes-test.ai', status: 'completed', result_preview: 'ok', retry_count: 0, claimed_by: 'NODE23A4' }], error: null, artifacts: [{ name: 'out.txt' }] },
       { task_id: 'task_x2', name: 'draft-chapter', status: 'pending', priority: 1, stages: [{ stage_id: 's2', capability: 'draft.ai', status: 'pending', result_preview: '', retry_count: 1 }], error: 'retry exhausted on stage', artifacts: [] }
     ],
     errors: ['node r2 unreachable (timeout)']
@@ -223,7 +223,7 @@ try {
   globalThis.__ACTIVITY_DATA__ = {
     generated_at: new Date().toISOString(),
     daemon: { running: true, pid: 4242, heartbeat_status: 'ok', tasks_completed: 14, tasks_failed: 1 },
-    local_node: { node_id: 'n0', node_name: 'E4W3CBWQ', node_role: 'node' },
+    local_node: { node_id: 'n0', node_name: 'node-23a', node_role: 'node' },
     capabilities: [
       {
         name: 'draft.ai', type: 'task', provider_count: 2, queues_total: 3, selectable: true,
@@ -234,21 +234,21 @@ try {
           verbose: { name: 'verbose', type: 'boolean', required: false, description: 'Talk more.', example: false }
         },
         providers: [
-          { node_id: 'n1', node_name: 'webstack', available: true, queues: [{ queue: 'q1', depth: 3 }] },
-          { node_id: 'n2', node_name: 'NovaForge', available: false, queues: [] }
+          { node_id: 'n1', node_name: 'Node-41C', available: true, queues: [{ queue: 'q1', depth: 3 }] },
+          { node_id: 'n2', node_name: 'Node-31B', available: false, queues: [] }
         ]
       },
       {
         name: 'hermes-test.ai', type: 'task', provider_count: 1, queues_total: 0, selectable: true,
         description: 'Hermes connectivity test.',
         fields: { task: { name: 'task', type: 'string', required: true, description: 'What to test.' } },
-        providers: [{ node_id: 'n0', node_name: 'E4W3CBWQ', available: false, queues: [] }]
+        providers: [{ node_id: 'n0', node_name: 'node-23a', available: false, queues: [] }]
       },
       {
         name: 'backup.info', type: 'native', provider_count: 1, queues_total: 0, selectable: false,
         description: 'Relay storage op — not submittable here.',
         fields: {},
-        providers: [{ node_id: 'n1', node_name: 'webstack', available: true, queues: [] }]
+        providers: [{ node_id: 'n1', node_name: 'Node-41C', available: true, queues: [] }]
       }
     ]
   }

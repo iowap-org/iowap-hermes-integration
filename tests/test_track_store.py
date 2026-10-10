@@ -101,7 +101,7 @@ def test_tracked_list_evicts_stale_cache_entries(track_file):
 @pytest.mark.asyncio
 async def test_tasks_endpoint_renders_delegated_row(track_file, monkeypatch):
     plugin_api._track_store_merge("dX", {
-        "capability": "mc.list.players", "owner": "AMKJA9AE",
+        "capability": "mc.list.players", "owner": "NODE23A4",
         "delegated": True, "submitted_at": time.time(), "name": "probe",
     })
     # make sure the delegated row never triggers a node-cli fetch

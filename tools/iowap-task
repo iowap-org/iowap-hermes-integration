@@ -22,8 +22,8 @@ before tracking.
 
 Examples:
   iowap-task submit --stage 'agent.ai:{"task":"..."}' --name my-job
-  iowap-task submit --stage 'mc.list.players:{}' --owner AMKJA9AE  # delegated
-  iowap-task track task_xXX [--delegated --capability code.ai --owner RYBFNMET]
+  iowap-task submit --stage 'mc.list.players:{}' --owner NODE23A4  # delegated
+  iowap-task track task_xXX [--delegated --capability code.ai --owner NODE31B4]
   iowap-task list
 """
 
