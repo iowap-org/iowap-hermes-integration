@@ -70,7 +70,10 @@ function healthLineOf(h) {
   if (h.error) return `relay unreachable (${String(h.error).slice(0, 60)})`
   const body = h.body || {}
   const parts = []
-  if (body.status) parts.push(`relay ${body.status}`)
+  // T-007: backend probes via `node-cli server health` (body.ok); the legacy
+  // raw-`/health` shape (body.status) stays valid until one app restart.
+  if (body.ok) parts.push('relay ok')
+  else if (body.status) parts.push(`relay ${body.status}`)
   if (body.version) parts.push(`v${body.version}`)
   return parts.length ? parts.join(' · ') : null
 }

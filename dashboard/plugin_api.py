@@ -196,54 +196,48 @@ def _loads_json(raw: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Health: unauthenticated /health probe (httpx from the gateway env)
+# Health: node-cli `server health` probe (T-178/T-007). node-cli stays the
+# ONLY relay client — no httpx, no hand-parsed relay URL.
 # ---------------------------------------------------------------------------
 
 _health_state: dict[str, tuple[float, dict]] = {}
-HEALTH_TTL = 30.0  # cache seconds; the relay health endpoint is trivial load
-HEALTH_TIMEOUT = 5.0
+HEALTH_TTL = 30.0  # cache seconds; a subprocess probe every 30s is cheap
+HEALTH_TIMEOUT = 15.0
 
 
 async def _relay_health() -> dict:
-    import httpx  # gateway process dependency — hermes-agent ships it
+    """Relay health via `node-cli --json server health` (T-178).
 
+    node-cli owns relay-target resolution (relay_config.json pin, mDNS
+    fallback) — this backend keeps nothing hand-parsed. The probe is
+    unauthenticated; both outcomes are parseable JSON on stdout (ok=true
+    with the health body, ok=false with an error string and exit 1), so
+    ok=(0, 1) and the `ok` field decides. Never raises: failures come back
+    as {"error": …} for the UI's unreachable state. No local URL fallback:
+    on hosts without node state the setup gate short-circuits upstream
+    (catalog review finding #2) — health never fabricates a target.
+    """
     now = time.monotonic()
     cached = _health_state.get("v")
     if cached and now - cached[0] < HEALTH_TTL:
         return cached[1]
 
-    base = None
-    home = Path.home()
-    cfg_path = str(home / ".relay" / "iowap-agent.json")
+    data: dict
     try:
-        with open(cfg_path, "r", encoding="utf-8") as fh:
-            meta = json.load(fh)
-        base = (meta.get("base_url") or "").rstrip("/")
-    except Exception:
-        base = None
-    if not base:
-        # No fallback probe: a foreign host must not get this machine's LAN
-        # address (catalog review finding #2) — health stays None and the
-        # UI renders its "relay not configured" state instead.
-        data: dict = {
-            "error": "relay not configured — no base_url in " + cfg_path,
-            "url": None,
-            "setup": _check_setup(),
-        }
-        _health_state["v"] = (now, data)
-        return data
-
-    url = f"{base}/health"
-    try:
-        async with httpx.AsyncClient(timeout=HEALTH_TIMEOUT) as client:
-            resp = await client.get(url)
-        data: dict = {"status": resp.status_code, "url": url}
-        try:
-            data["body"] = resp.json()
-        except Exception:
-            data["body"] = None
-    except Exception as exc:  # network down, refused, timeouts — never 500 the UI
-        data = {"error": f"{type(exc).__name__}: {exc}", "url": url}
+        raw = await _run_node_cli(
+            ["server", "health"], timeout=HEALTH_TIMEOUT, ok=(0, 1)
+        )
+        parsed = _loads_json(raw)
+    except Exception as exc:  # timeout, node-cli missing, exit not in (0, 1)
+        data = {"error": f"{type(exc).__name__}: {exc}", "via": "node-cli"}
+    else:
+        if isinstance(parsed, dict) and parsed.get("ok"):
+            data = {"ok": True, "via": "node-cli", "body": parsed}
+        elif isinstance(parsed, dict) and parsed.get("error"):
+            data = {"error": str(parsed["error"])[:120], "via": "node-cli"}
+        else:
+            data = {"error": "node-cli server health: unexpected output shape",
+                    "via": "node-cli"}
 
     _health_state["v"] = (now, data)
     return data

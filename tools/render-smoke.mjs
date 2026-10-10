@@ -200,9 +200,15 @@ try {
       { node_id: 'n3', node_name: 'Dashboard Admin', role: 'admin', status: 'online', load: null, load_source: null, queue_depth: null, busy: false, last_seen: null, available: true, capabilities: [] }
     ],
     capability_map: { n1: ['chat.ai'], n2: ['tts.ai'] },
-    health: { status: 200, url: 'http://192.168.2.60:8788/health', body: { status: 'ok', version: '2.0.0', mode: 'core' } },
+    health: { ok: true, via: 'node-cli', body: { ok: true, error: '', version: '2.0.0', mode: 'core', database: 'ok', nodes_online: 9, nodes_total: 10 } },
     errors: []
   }
+  for (const c of contributionsWithRender) renderContribution(c)
+
+  // Health-error line: node-cli reports an unreachable relay (T-007 shape —
+  // {"error", via}, no body) — healthLineOf must render the unreachable line.
+  globalThis.__FLEET_DATA__ = { ...globalThis.__FLEET_DATA__,
+    health: { error: 'health: [Errno 111] Connection refused', via: 'node-cli' } }
   for (const c of contributionsWithRender) renderContribution(c)
 
   // Populated activity (tasks + capabilities — the new TasksPage path)
@@ -255,7 +261,7 @@ try {
   globalThis.__FLEET_IS_ERROR__ = true
   for (const c of contributionsWithRender) renderContribution(c)
 
-  console.log(`OK: ${contributionsWithRender.length} contributions rendered clean in 4 data states (empty/populated/activity/error)`)
+  console.log(`OK: ${contributionsWithRender.length} contributions rendered clean in 5 data states (empty/populated/health-error/activity/error)`)
   rmSync(temp, { recursive: true, force: true })
   process.exit(0)
 } catch (err) {

@@ -104,7 +104,10 @@ stays off.
 (submit, track, delegated rows), live data via `node-cli`. Agent sessions
 join through the `iowap-task` bridge (repo `tools/`, installed at
 `~/.local/bin/iowap-task`) into a shared flock-protected track store. The
-relay health probe is an unauthenticated `/health` GET. Per-node detail
+relay health probe runs through node-cli itself (`node-cli server health`)
+— no raw HTTP and no hand-parsed relay URL on the backend side; the target
+pin (relay_config.json, mDNS fallback) stays node-cli's business. Per-node
+detail
 (`load_source`) distinguishes host-load (`loadavg`) from agent-scoped cgroup
 values — do not compare load numbers across nodes.
 
