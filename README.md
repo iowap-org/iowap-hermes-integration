@@ -100,8 +100,9 @@ stays off.
 
 ## Status
 
-**v0.3.0** — chip + pane + fleet page + palette commands + **tasks page**
-(submit, track, delegated rows), live data via `node-cli`. Agent sessions
+**v0.3.1** — chip + pane + fleet page + palette commands + **tasks page**
+(submit, track, delegated rows), live data via `node-cli`; release notes:
+[CHANGELOG.md](CHANGELOG.md). Agent sessions
 join through the `iowap-task` bridge (repo `tools/`, installed at
 `~/.local/bin/iowap-task`) into a shared flock-protected track store. The
 relay health probe runs through node-cli itself (`node-cli server health`)
