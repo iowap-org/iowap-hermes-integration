@@ -63,6 +63,16 @@ plugin reload is not enough the first time) and run **Reload desktop
 plugins** (⌘K) afterwards for frontend edits. Without the backend the UI
 degrades gracefully to an onboarding hint.
 
+**How the backend finds node-cli** (the desktop-spawned gateway does not
+inherit the login-shell PATH — resolution must never depend on it):
+`~/.relay/node.yaml` top-level **`node_cli_path`** pin → `PATH` → a short
+list of known venv locations. The pin is written by **node-cli itself**
+(every invocation re-stamps its own absolute path, drift-guarded and
+self-healing through `capabilities publish`; requires iowap-node
+≥ 2.3.20 — with an older wheel, run any `node-cli` command once or set
+the key by hand). This backend reads the key strictly read-only; a stale
+pin falls through to the next link instead of blocking.
+
 ## Install from source (dev)
 
 For repo checkouts and development — catalog users don't need this
@@ -100,7 +110,7 @@ stays off.
 
 ## Status
 
-**v0.3.1** — chip + pane + fleet page + palette commands + **tasks page**
+**v0.3.2** — chip + pane + fleet page + palette commands + **tasks page**
 (submit, track, delegated rows), live data via `node-cli`; release notes:
 [CHANGELOG.md](CHANGELOG.md). Agent sessions
 join through the `iowap-task` bridge (repo `tools/`, installed at

@@ -33,6 +33,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -64,7 +65,29 @@ _NODE_CLI_CANDIDATES = (
 )
 
 
+def _node_yaml_cli_pin() -> str | None:
+    """Top-level node_cli_path from ~/.relay/node.yaml (T-226 read-only).
+
+    Same first-link chain as the backend's _node_yaml_cli_pin(): node-cli
+    self-stamps its absolute path; a stale pin falls through to PATH.
+    """
+    try:
+        raw = (Path.home() / ".relay" / "node.yaml").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"^node_cli_path:(.*)$", raw, re.MULTILINE)
+    if not m:
+        return None
+    return m.group(1).strip().strip("'\"") or None
+
+
 def find_node_cli() -> str:
+    """node.yaml pin → PATH → known install locations (mirrors backend)."""
+    pin = _node_yaml_cli_pin()
+    if pin:
+        cand = Path(pin).expanduser()
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
     found = shutil.which("node-cli")
     if found:
         return found

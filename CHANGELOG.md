@@ -2,6 +2,19 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.3.2 — 2026-10-16
+
+### Fixed
+- node-cli resolution got a first link that does not depend on PATH or a
+  guessed install layout: the top-level `node_cli_path` pin in
+  `~/.relay/node.yaml`, **self-stamped by node-cli itself** (T-226,
+  iowap-node 2.3.20). The desktop-spawned gateway inherits no
+  login-shell PATH, and the hardcoded candidate list missed real layouts
+  (live: mac node-cli at `~/iowap-node/.venv/bin/node-cli` — plugin could
+  not find node-cli although it was installed). Chain: node.yaml pin →
+  PATH → known venv locations; a stale pin falls through, the pin read is
+  strictly read-only. `tools/iowap-task` mirrors the same chain.
+
 ## 0.3.1 — 2026-10-10
 
 ### Fixed

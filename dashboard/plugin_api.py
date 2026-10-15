@@ -11,6 +11,10 @@ Design rules (see repo README):
 - node-cli is invoked with the global --json flag *before* the subcommand
   (root-level flag; `node-cli update check --json` fails with
   "unrecognized arguments" — same class of pitfall).
+- node-cli resolution: `~/.relay/node.yaml` top-level `node_cli_path` pin
+  (self-stamped by node-cli itself, T-226 / iowap-node 2.3.20+) → PATH →
+  known venv locations. The pin read is strictly read-only; a stale pin
+  falls through. tools/iowap-task mirrors the same chain.
 - Run from HOME, not from an iowap checkout: a local `nodes/` package shadowing
   site-packages would silently run repo code instead of the installed wheel.
 - Load values from CT nodes are cgroup/agent-scoped; `load_source` surfaces
@@ -46,6 +50,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from contextlib import contextmanager
@@ -89,18 +94,9 @@ def _check_setup(force: bool = False) -> dict:
         return cached[1]
 
     home = Path.home()
-    cli = shutil.which("node-cli")
-    if not cli:
-        # The desktop-spawned gateway does not inherit the login-shell PATH —
-        # probe the known venv/bin locations explicitly.
-        for cand in (
-            home / ".hermes/hermes-agent/venv/bin/node-cli",
-            home / ".local/bin/node-cli",
-            Path("/usr/local/bin/node-cli"),
-        ):
-            if cand.is_file() and os.access(cand, os.X_OK):
-                cli = str(cand)
-                break
+    # Resolution must not depend on the ambient PATH: node.yaml pin →
+    # PATH → known install locations (see _find_node_cli / T-226).
+    cli = _find_node_cli()
 
     state_path = home / ".relay" / "iowap-agent.json"
     has_state = state_path.is_file()
@@ -147,14 +143,47 @@ _NODE_CLI_CANDIDATES = (
 )
 
 
-def _resolve_node_cli() -> str:
+def _node_yaml_cli_pin() -> str | None:
+    """Top-level ``node_cli_path`` from ``~/.relay/node.yaml`` (read-only).
+
+    node-cli self-stamps its own absolute path there (T-226, iowap-node
+    2.3.20) — the desktop-spawned gateway may inherit NO usable PATH and
+    the known-candidate list cannot enumerate every install layout, so
+    the stamp is the first link of the resolution chain. Only a column-0
+    key counts (indented keys inside capability blocks never match); a
+    missing/stale pin returns None and the chain falls through.
+    """
+    try:
+        raw = (Path.home() / ".relay" / "node.yaml").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"^node_cli_path:(.*)$", raw, re.MULTILINE)
+    if not m:
+        return None
+    value = m.group(1).strip().strip("'\"")
+    return value or None
+
+
+def _find_node_cli() -> str | None:
+    """Locate node-cli: node.yaml pin → PATH → known install locations."""
+    pin = _node_yaml_cli_pin()
+    if pin:
+        cand = Path(pin).expanduser()
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
     found = shutil.which("node-cli")
     if found:
         return found
-    # Also probe inside known venvs' bin dirs that may not be on PATH.
     for cand in _NODE_CLI_CANDIDATES:
         if os.path.isfile(cand) and os.access(cand, os.X_OK):
             return str(cand)
+    return None
+
+
+def _resolve_node_cli() -> str:
+    found = _find_node_cli()
+    if found:
+        return found
     return "node-cli"  # let create_subprocess_exec raise a clear error
 
 
