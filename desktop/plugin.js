@@ -24,6 +24,7 @@ import {
   PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, STATUSBAR_AREAS
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
+import { useEffect } from 'react'
 
 const ID = 'iowap'
 const FLEET_KEY = [ID, 'fleet']
@@ -110,6 +111,56 @@ function providersShort(p, t) {
 }
 
 // ---------------------------------------------------------------------------
+// Task watcher (pure logic — no ctx): posts stage results and terminal task
+// states into chat via host.composer. Non-terminal transitions only move the
+// registry forward (no noise); first sight registers without back-posting.
+// ---------------------------------------------------------------------------
+
+const TERMINAL_TASK = ['completed', 'failed', 'timed_out']
+const POSTED_STAGE = ['completed', 'failed', 'timed_out']
+
+function taskSnap(x) {
+  return {
+    status: x?.status ?? '',
+    stages: (x?.stages || []).map(s => s?.status ?? '')
+  }
+}
+
+function sameSnap(a, b) {
+  return a && b
+    && a.status === b.status
+    && a.stages.length === b.stages.length
+    && a.stages.every((s, i) => s === b.stages[i])
+}
+
+// Pure sweep: (prevMap, tasks, t) → { lines, nextMap }. One line per
+// meaningful transition, the caller decides how to post them (all lines of a
+// sweep go into ONE submit — no per-line turns).
+function watchSweep(prevMap, tasks, t) {
+  const lines = []
+  const nextMap = {}
+  for (const x of tasks || []) {
+    if (!x?.task_id) continue
+    const prev = prevMap[x.task_id]
+    const snap = taskSnap(x)
+    nextMap[x.task_id] = snap
+    if (!prev) continue // first sight: register only, never back-post
+    const name = x.name || x.task_id
+    ;(x.stages || []).forEach((st, i) => {
+      const before = prev.stages?.[i]
+      const now = snap.stages[i]
+      if (!now || before === now || !POSTED_STAGE.includes(now)) return
+      const preview = String(st?.result_preview || '').trim()
+      lines.push(t('watchStage', name, i + 1, now, preview))
+    })
+    if (prev.status !== snap.status && TERMINAL_TASK.includes(snap.status)) {
+      lines.push(t('watchFinal', name, snap.status, String(x.error || '').trim()))
+    }
+  }
+  return { lines, nextMap }
+}
+
+// ---------------------------------------------------------------------------
 // register(ctx) — components close over ctx (rest, i18n, storage)
 // ---------------------------------------------------------------------------
 
@@ -157,33 +208,100 @@ export default {
     }
 
     // -----------------------------------------------------------------
+    // Task watcher (T-013): the chip renders for the app's whole lifetime,
+    // so the watcher rides on it — polls /tasks (same key as the tasks page,
+    // one poll), diffs against a persisted registry and auto-posts stage
+    // results + finals into chat via host.composer. Fail-closed: submits
+    // only into a mounted composer; otherwise the update lands as a draft
+    // plus a toast (never a broadcast into a hidden pane).
+    // -----------------------------------------------------------------
+    let watchRegistry = {}
+    try { watchRegistry = ctx.storage.get('watch.registry') || {} } catch { /* memory-only */ }
+    const $watchOn = atom(true)
+    try { $watchOn.set(ctx.storage.get('watch.enabled') !== false) } catch { /* default on */ }
+
+    function setWatchOn(v) {
+      $watchOn.set(v)
+      try { ctx.storage.set('watch.enabled', v) } catch { /* best effort */ }
+    }
+
+    function persistWatch(next) {
+      // Bounded store: drop terminal task rows first, then oldest entries.
+      let keep = next
+      const ids = Object.keys(next)
+      if (ids.length > 200) {
+        keep = { ...next }
+        for (const id of Object.keys(keep)) {
+          if (Object.keys(keep).length <= 200) break
+          if (TERMINAL_TASK.includes(keep[id]?.status)) delete keep[id]
+        }
+        const rest = Object.keys(keep)
+        if (rest.length > 200) for (const id of rest.slice(0, rest.length - 200)) delete keep[id]
+      }
+      watchRegistry = keep
+      try { ctx.storage.set('watch.registry', keep) } catch { /* best effort */ }
+    }
+
+    function postWatchLines(lines, t) {
+      const text = lines.join('\n')
+      if (!text) return
+      let ok = false
+      try { ok = host.composer.submit(null, text) } catch { /* fall through */ }
+      if (ok) return
+      let drafted = false
+      try { drafted = host.composer.insertText(null, text, { mode: 'block' }) } catch { /* fall through */ }
+      try { host.notify({ kind: 'info', message: drafted ? t('watchDraftNote') : text }) } catch { /* nothing else */ }
+    }
+
+    function sweepTasks(tasks, t) {
+      const { lines, nextMap } = watchSweep(watchRegistry, tasks || [], t)
+      persistWatch(nextMap)
+      if (lines.length && $watchOn.get()) postWatchLines(lines, t)
+    }
+
+    // Headless: rendered inside the chip (always mounted), returns nothing.
+    function TaskWatcher() {
+      const t = usePluginI18n(ID)
+      const tasksQ = useTasks()
+      useEffect(() => {
+        if (tasksQ?.data) sweepTasks(tasksQ.data.tasks || [], t)
+      }, [tasksQ?.data])
+      return null
+    }
+
+    // -----------------------------------------------------------------
     // Statusbar chip: live dot + online/total counter
     // -----------------------------------------------------------------
     function Chip() {
       const t = usePluginI18n(ID)
       const summary = useValue(lastSummary)
 
-      return jsx(Tip, {
+      return jsxs(Tip, {
         label: t('chipTip'),
-        children: jsx('button', {
-          className: cn(
-            'inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
-            'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'
-          ),
-          type: 'button',
-          onClick: () => {
-            haptic('tap')
-            host.navigate('/iowap-fleet')
-          },
-          children: jsxs('span', {
-            className: 'inline-flex items-center gap-1',
-            children: [
-              jsx(StatusDot, { tone: summary.tone }),
-              jsx('span', { children: ID }),
-              jsx('span', { className: 'tabular-nums', children: `${summary.online}/${summary.total}` })
-            ]
+        children: [
+          // Headless task watcher (T-013) — the chip is the always-mounted
+          // carrier; the watcher itself renders nothing.
+          jsx(TaskWatcher, {}),
+          jsx('button', {
+            className: cn(
+              'inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
+              'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'
+            ),
+            type: 'button',
+            onClick: () => {
+              haptic('tap')
+              host.navigate('/iowap-fleet')
+            },
+            children: jsxs('span', {
+              className: 'inline-flex items-center gap-1',
+              children: [
+                jsx(StatusDot, { tone: summary.tone }),
+                jsx('span', { children: ID }),
+                jsx('span', { className: 'tabular-nums', children: `${summary.online}/${summary.total}` })
+              ]
+            })
           })
-        })
+        ]
       })
     }
 
@@ -689,6 +807,7 @@ export default {
       const nameTxt = useValue($name)
       const formErr = useValue($formErr)
       const trackId = useValue($trackId)
+      const watchOn = useValue($watchOn)
 
       // Backend-first: consume the computed `selectable` flag (T-010); the
       // type check is only the fallback for legacy responses without the flag.
@@ -700,6 +819,10 @@ export default {
           qc.invalidateQueries({ queryKey: TASK_KEY })
           if (res?.ok) {
             host.notify({ kind: 'info', message: t('submittedOk', res.task_id) })
+            if ($watchOn.get()) {
+              const nm = String($name.get() || '').trim()
+              postWatchLines([t('watchSubmitted', nm || res.task_id)], t)
+            }
             $name.set(''); $formErr.set('')
           } else {
             host.notify({ kind: 'error', message: t('submitErr', res?.error || '?') })
@@ -725,6 +848,18 @@ export default {
         children: [
           jsxs('div', { className: 'flex items-center gap-3', children: [
             jsx('div', { className: 'text-base font-medium', children: t('tasksTitle') }),
+            jsxs('label', {
+              className: 'flex items-center gap-1.5 text-xs text-(--ui-text-tertiary)',
+              children: [
+                jsx(Switch, {
+                  id: 'iowap-watch',
+                  size: 'xs',
+                  checked: watchOn,
+                  onCheckedChange: v => { haptic('tap'); setWatchOn(v) }
+                }),
+                t('watchToggleLabel')
+              ]
+            }),
             jsx('span', { className: 'flex-1' }),
             jsx(Button, {
               disabled: tasksQ.isFetching,
@@ -886,7 +1021,13 @@ export default {
         setupStep1: '1. Install the node framework: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
         setupStep2: '2. Register against a relay: node-cli node register --base-url <relay-url>',
         setupStep3: '3. Reload this app — the fleet view appears automatically.',
-        setupDocs: 'Docs'
+        setupDocs: 'Docs',
+        // task watcher (T-013)
+        watchToggleLabel: 'post task updates to chat',
+        watchSubmitted: n => `IOWAP watch: tracking "${n}" — updates will post here.`,
+        watchStage: (n, i, s, p) => `IOWAP task "${n}": stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
+        watchFinal: (n, s, e) => `IOWAP task "${n}": ${s}${e ? ` — ${e}` : ''}`,
+        watchDraftNote: () => 'iowap watch — no open chat composer, update kept as draft'
       },
       de: {
         paneTitle: 'IOWAP Fleet',
@@ -942,7 +1083,13 @@ export default {
         setupStep1: '1. Install the node framework: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
         setupStep2: '2. Register against a relay: node-cli node register --base-url <relay-url>',
         setupStep3: '3. Reload this app — the fleet view appears automatically.',
-        setupDocs: 'Docs'
+        setupDocs: 'Docs',
+        // Task-Watcher (T-013)
+        watchToggleLabel: 'Task-Updates in den Chat posten',
+        watchSubmitted: n => `IOWAP watch: überwache "${n}" — Updates laufen hier ein.`,
+        watchStage: (n, i, s, p) => `IOWAP-Task "${n}": Stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
+        watchFinal: (n, s, e) => `IOWAP-Task "${n}": ${s}${e ? ` — ${e}` : ''}`,
+        watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft'
       }
     })
 
@@ -1066,3 +1213,7 @@ export default {
     })
   }
 }
+
+// Test hook for tools/render-smoke.mjs — inert in production (the app loads
+// only the default export): exposes the pure watcher sweep for assertions.
+export const __test = { watchSweep, taskSnap, sameSnap }

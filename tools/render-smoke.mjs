@@ -77,7 +77,18 @@ const sdkPath = join(temp, 'node_modules', '@hermes', 'plugin-sdk', 'index.mjs')
 writeFileSync(sdkPath, `
 export const cn = ${sdkStub.cn.toString()}
 export const haptic = () => {}
-export const host = { navigate: () => {}, notify: () => {} }
+globalThis.__COMPOSER__ = { submitted: [], inserted: [] }
+export const host = {
+  navigate: () => {},
+  notify: () => {},
+  composer: {
+    getDraft: async () => null,
+    setDraft: async () => true,
+    insertText: async (_sid, text) => { globalThis.__COMPOSER__.inserted.push(String(text)); return true },
+    submit: (_sid, text) => { globalThis.__COMPOSER__.submitted.push(String(text)); return true },
+    focus: () => {}
+  }
+}
 export const Tip = 'Tip'
 export const Badge = 'Badge'
 export const Button = 'Button'
@@ -125,7 +136,7 @@ try {
   }
 }
 writeFileSync(join(temp, 'node_modules', 'react', 'jsx-runtime.js'),
-  `export const jsx = ${jsxShim.jsx.toString()}\nexport const jsxs = ${jsxShim.jsxs.toString()}\n`)
+  `export const jsx = ${jsxShim.jsx.toString()}\nexport const jsxs = ${jsxShim.jsxs.toString()}\nexport const useEffect = () => {}\n`)
 writeFileSync(join(temp, 'node_modules', 'react', 'package.json'),
   JSON.stringify({
     name: 'react',
@@ -307,6 +318,42 @@ try {
     for (const s of ['draft.ai', 'nostamp.legacy']) {
       if (!blob.includes(s)) throw new Error(`T-010: expected selectable cap "${s}" missing from the task form render`)
     }
+  }
+
+  // T-013 watcher logic: pure sweep, invoked through the plugin's __test hook.
+  {
+    const assert = (cond, msg) => { if (!cond) throw new Error('T-013: ' + msg) }
+    const t = (...a) => a.join('|')
+    const row = (status, stages, name, err, preview) => ({
+      task_id: 't13', name, status, error: err ?? null,
+      stages: stages.map(s => ({ status: s, result_preview: preview || '' }))
+    })
+    // first sight: registry only, silent
+    let r = mod.__test.watchSweep({}, [row('pending', ['pending'], 'demo')], t)
+    assert(!r.lines.length, 'first sight must not back-post')
+    assert(r.nextMap.t13?.status === 'pending', 'first sight must register the task')
+    // non-terminal transitions stay silent (registry moves on)
+    r = mod.__test.watchSweep(r.nextMap, [row('running', ['claimed'], 'demo')], t)
+    assert(!r.lines.length, 'non-terminal transitions must not post')
+    // stage completed → exactly one line with the result preview
+    r = mod.__test.watchSweep(r.nextMap, [row('running', ['completed'], 'demo', null, 'done ok')], t)
+    assert(r.lines.length === 1 && r.lines[0] === 'watchStage|demo|1|completed|done ok',
+      'stage completion must post once with the preview')
+    // final state → posted; unchanged stage is NOT re-posted
+    r = mod.__test.watchSweep(r.nextMap, [row('completed', ['completed'], 'demo')], t)
+    assert(r.lines.length === 1 && r.lines[0] === 'watchFinal|demo|completed|', 'final must post once')
+    // same poll again → dup-guard stays silent
+    const again = mod.__test.watchSweep(r.nextMap, [row('completed', ['completed'], 'demo')], t)
+    assert(!again.lines.length, 'dup guard must not post twice')
+    // failed final: stage failure and the final line post in ONE sweep
+    const f = mod.__test.watchSweep(
+      { t13b: { status: 'running', stages: ['claimed'] } },
+      [{ task_id: 't13b', name: 'demo-b', status: 'failed', error: 'boom', stages: [{ status: 'failed', result_preview: '' }] }],
+      t)
+    assert(f.lines.length === 2
+      && f.lines[0] === 'watchStage|demo-b|1|failed|'
+      && f.lines[1] === 'watchFinal|demo-b|failed|boom',
+      'failed final must post the stage failure and the final line')
   }
 
   // Error path (backend unreachable)
