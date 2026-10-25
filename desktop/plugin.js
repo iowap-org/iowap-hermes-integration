@@ -259,15 +259,8 @@ export default {
       if (lines.length && $watchOn.get()) postWatchLines(lines, t)
     }
 
-    // Headless: rendered inside the chip (always mounted), returns nothing.
-    function TaskWatcher() {
-      const t = usePluginI18n(ID)
-      const tasksQ = useTasks()
-      useEffect(() => {
-        if (tasksQ?.data) sweepTasks(tasksQ.data.tasks || [], t)
-      }, [tasksQ?.data])
-      return null
-    }
+    // (T-013: the watcher hooks live in Chip — no separate headless component;
+    // Tip accepts exactly one child.)
 
     // -----------------------------------------------------------------
     // Statusbar chip: live dot + online/total counter
@@ -275,33 +268,36 @@ export default {
     function Chip() {
       const t = usePluginI18n(ID)
       const summary = useValue(lastSummary)
+      // T-013 task watcher rides INSIDE this always-mounted component: the
+      // hooks live in the component body — Tip (Radix slot) accepts exactly
+      // ONE child, so the watcher can't be an extra JSX child (that shipped
+      // as 'Primitive.button failed to slot onto its children' crash).
+      const tasksQ = useTasks()
+      useEffect(() => {
+        if (tasksQ?.data) sweepTasks(tasksQ.data.tasks || [], t)
+      }, [tasksQ?.data])
 
-      return jsxs(Tip, {
+      return jsx(Tip, {
         label: t('chipTip'),
-        children: [
-          // Headless task watcher (T-013) — the chip is the always-mounted
-          // carrier; the watcher itself renders nothing.
-          jsx(TaskWatcher, {}),
-          jsx('button', {
-            className: cn(
-              'inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
-              'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'
-            ),
-            type: 'button',
-            onClick: () => {
-              haptic('tap')
-              host.navigate('/iowap-fleet')
-            },
-            children: jsxs('span', {
-              className: 'inline-flex items-center gap-1',
-              children: [
-                jsx(StatusDot, { tone: summary.tone }),
-                jsx('span', { children: ID }),
-                jsx('span', { className: 'tabular-nums', children: `${summary.online}/${summary.total}` })
-              ]
-            })
+        children: jsx('button', {
+          className: cn(
+            'inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
+            'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'
+          ),
+          type: 'button',
+          onClick: () => {
+            haptic('tap')
+            host.navigate('/iowap-fleet')
+          },
+          children: jsxs('span', {
+            className: 'inline-flex items-center gap-1',
+            children: [
+              jsx(StatusDot, { tone: summary.tone }),
+              jsx('span', { children: ID }),
+              jsx('span', { className: 'tabular-nums', children: `${summary.online}/${summary.total}` })
+            ]
           })
-        ]
+        })
       })
     }
 

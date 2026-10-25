@@ -6,6 +6,12 @@
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Parent dirs first — on a fresh host (or after a manual cleanup) neither the
+# desktop plugin dir nor the backend dashboard dir exists yet; `install -m`
+# does not create them (live finding 2026-10-25: backend half wiped by a half
+# catalog install attempt → deploy failed with ENOENT).
+mkdir -p "$HOME/.hermes/desktop-plugins/iowap" "$HOME/.hermes/plugins/iowap/dashboard"
+
 install -m 644 "$repo/desktop/plugin.js" "$HOME/.hermes/desktop-plugins/iowap/plugin.js"
 install -m 644 "$repo/plugin.yaml" "$HOME/.hermes/desktop-plugins/iowap/plugin.yaml"
 install -m 644 "$repo/dashboard/plugin_api.py" "$HOME/.hermes/plugins/iowap/dashboard/plugin_api.py"
