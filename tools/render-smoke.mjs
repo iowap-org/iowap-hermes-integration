@@ -337,11 +337,11 @@ try {
     assert(!r.lines.length, 'non-terminal transitions must not post')
     // stage completed → exactly one line with the result preview
     r = mod.__test.watchSweep(r.nextMap, [row('running', ['completed'], 'demo', null, 'done ok')], t)
-    assert(r.lines.length === 1 && r.lines[0] === 'watchStage|demo|1|completed|done ok',
-      'stage completion must post once with the preview')
+    assert(r.lines.length === 1 && r.lines[0] === 'watchStage|demo|t13|1|completed|done ok',
+      'stage completion must post once with the preview and task id')
     // final state → posted; unchanged stage is NOT re-posted
     r = mod.__test.watchSweep(r.nextMap, [row('completed', ['completed'], 'demo')], t)
-    assert(r.lines.length === 1 && r.lines[0] === 'watchFinal|demo|completed|', 'final must post once')
+    assert(r.lines.length === 1 && r.lines[0] === 'watchFinal|demo|t13|completed|', 'final must post once')
     // same poll again → dup-guard stays silent
     const again = mod.__test.watchSweep(r.nextMap, [row('completed', ['completed'], 'demo')], t)
     assert(!again.lines.length, 'dup guard must not post twice')
@@ -351,8 +351,8 @@ try {
       [{ task_id: 't13b', name: 'demo-b', status: 'failed', error: 'boom', stages: [{ status: 'failed', result_preview: '' }] }],
       t)
     assert(f.lines.length === 2
-      && f.lines[0] === 'watchStage|demo-b|1|failed|'
-      && f.lines[1] === 'watchFinal|demo-b|failed|boom',
+      && f.lines[0] === 'watchStage|demo-b|t13b|1|failed|'
+      && f.lines[1] === 'watchFinal|demo-b|t13b|failed|boom',
       'failed final must post the stage failure and the final line')
   }
 

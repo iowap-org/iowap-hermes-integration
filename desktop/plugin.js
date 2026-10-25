@@ -151,10 +151,10 @@ function watchSweep(prevMap, tasks, t) {
       const now = snap.stages[i]
       if (!now || before === now || !POSTED_STAGE.includes(now)) return
       const preview = String(st?.result_preview || '').trim()
-      lines.push(t('watchStage', name, i + 1, now, preview))
+      lines.push(t('watchStage', name, x.task_id, i + 1, now, preview))
     })
     if (prev.status !== snap.status && TERMINAL_TASK.includes(snap.status)) {
-      lines.push(t('watchFinal', name, snap.status, String(x.error || '').trim()))
+      lines.push(t('watchFinal', name, x.task_id, snap.status, String(x.error || '').trim()))
     }
   }
   return { lines, nextMap }
@@ -817,7 +817,7 @@ export default {
             host.notify({ kind: 'info', message: t('submittedOk', res.task_id) })
             if ($watchOn.get()) {
               const nm = String($name.get() || '').trim()
-              postWatchLines([t('watchSubmitted', nm || res.task_id)], t)
+              postWatchLines([t('watchSubmitted', nm || res.task_id, res.task_id)], t)
             }
             $name.set(''); $formErr.set('')
           } else {
@@ -1020,9 +1020,9 @@ export default {
         setupDocs: 'Docs',
         // task watcher (T-013)
         watchToggleLabel: 'post task updates to chat',
-        watchSubmitted: n => `IOWAP watch: tracking "${n}" — updates will post here.`,
-        watchStage: (n, i, s, p) => `IOWAP task "${n}": stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
-        watchFinal: (n, s, e) => `IOWAP task "${n}": ${s}${e ? ` — ${e}` : ''}`,
+        watchSubmitted: (n, tid) => `IOWAP watch: tracking "${n}" [${tid}] — updates will post here.`,
+        watchStage: (n, tid, i, s, p) => `IOWAP task "${n}" [${tid}]: stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
+        watchFinal: (n, tid, s, e) => `IOWAP task "${n}" [${tid}]: ${s}${e ? ` — ${e}` : ''}`,
         watchDraftNote: () => 'iowap watch — no open chat composer, update kept as draft',
         palWatch: 'IOWAP: toggle task watch posts',
         watchOnMsg: () => 'iowap task watcher: ON — stage results + finals post to chat',
@@ -1085,9 +1085,9 @@ export default {
         setupDocs: 'Docs',
         // Task-Watcher (T-013)
         watchToggleLabel: 'Task-Updates in den Chat posten',
-        watchSubmitted: n => `IOWAP watch: überwache "${n}" — Updates laufen hier ein.`,
-        watchStage: (n, i, s, p) => `IOWAP-Task "${n}": Stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
-        watchFinal: (n, s, e) => `IOWAP-Task "${n}": ${s}${e ? ` — ${e}` : ''}`,
+        watchSubmitted: (n, tid) => `IOWAP watch: überwache "${n}" [${tid}] — Updates laufen hier ein.`,
+        watchStage: (n, tid, i, s, p) => `IOWAP-Task "${n}" [${tid}]: Stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
+        watchFinal: (n, tid, s, e) => `IOWAP-Task "${n}" [${tid}]: ${s}${e ? ` — ${e}` : ''}`,
         watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft',
         palWatch: 'IOWAP: Task-Watcher umschalten',
         watchOnMsg: () => 'IOWAP Task-Watcher: AN — Stage-Ergebnisse + Finals posten in den Chat',
