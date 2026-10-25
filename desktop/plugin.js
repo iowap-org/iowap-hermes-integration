@@ -133,17 +133,27 @@ function sameSnap(a, b) {
     && a.stages.every((s, i) => s === b.stages[i])
 }
 
-// Pure sweep: (prevMap, tasks, t) → { lines, nextMap }. One line per
+const LONGRUN_MS = 5 * 60_000
+
+// Pure sweep: (prevMap, tasks, t, now) → { lines, nextMap }. One line per
 // meaningful transition, the caller decides how to post them (all lines of a
-// sweep go into ONE submit — no per-line turns).
-function watchSweep(prevMap, tasks, t) {
+// sweep go into ONE submit — no per-line turns). Watcher bookkeeping
+// (seenAt/warned) rides inside the registry values; duplication is prevented
+// by the stage/task transition guards, not by a whole-snapshot compare.
+// Longrun: non-terminal > 5 min → ONE hint per task.
+function watchSweep(prevMap, tasks, t, now = Date.now()) {
   const lines = []
   const nextMap = {}
   for (const x of tasks || []) {
     if (!x?.task_id) continue
     const prev = prevMap[x.task_id]
     const snap = taskSnap(x)
-    nextMap[x.task_id] = snap
+    nextMap[x.task_id] = { ...snap, seenAt: prev?.seenAt ?? now, warned: prev?.warned ?? false }
+    const book = nextMap[x.task_id]
+    if (prev && !book.warned && !TERMINAL_TASK.includes(snap.status) && now - book.seenAt > LONGRUN_MS) {
+      book.warned = true
+      lines.push(t('watchLongrun', x.name || x.task_id, Math.max(1, Math.round((now - book.seenAt) / 60_000))))
+    }
     if (!prev) continue // first sight: register only, never back-post
     const name = x.name || x.task_id
     ;(x.stages || []).forEach((st, i) => {
@@ -156,6 +166,36 @@ function watchSweep(prevMap, tasks, t) {
     if (prev.status !== snap.status && TERMINAL_TASK.includes(snap.status)) {
       lines.push(t('watchFinal', name, x.task_id, snap.status, String(x.error || '').trim()))
     }
+  }
+  return { lines, nextMap }
+}
+
+// Pure fleet watch: (prevMap, data, t) → { lines, nextMap }. Node status
+// transitions (online → non-online = warning, back = recovery) and relay
+// reachability (down → warning once, up → recovery once). First sight is
+// silent; unchanged nodes never post.
+function fleetSweep(prevMap, data, t) {
+  const lines = []
+  const nextMap = {}
+  for (const n of workerNodes(data)) {
+    const id = n.node_id || n.node_name
+    if (!id) continue
+    const prev = prevMap[id]
+    const nowStatus = n.status ?? ''
+    nextMap[id] = { status: nowStatus, name: pickName(n) }
+    if (!prev) continue // first sight: silent
+    if (prev.status === 'online' && nowStatus !== 'online') {
+      lines.push(t('fleetOffline', pickName(n), nowStatus || 'offline'))
+    } else if (prev.status !== 'online' && nowStatus === 'online') {
+      lines.push(t('fleetBack', pickName(n)))
+    }
+  }
+  // Relay reachability as row "__relay__" — health-error shape means down.
+  const down = data != null && data?.health?.error != null
+  const prevRelay = prevMap.__relay__
+  nextMap.__relay__ = { status: down ? 'down' : 'up' }
+  if (prevRelay?.status && prevRelay.status !== (down ? 'down' : 'up')) {
+    lines.push(down ? t('fleetRelayDown') : t('fleetRelayBack'))
   }
   return { lines, nextMap }
 }
@@ -259,6 +299,22 @@ export default {
       if (lines.length && $watchOn.get()) postWatchLines(lines, t)
     }
 
+    // Fleet watch state: node statuses + relay reachability (T-014). Same
+    // toggle as the task watcher; first sight silent, transitions warn once.
+    let fleetRegistry = {}
+    try { fleetRegistry = ctx.storage.get('watch.fleet') || {} } catch { /* memory-only */ }
+
+    function persistFleet(next) {
+      fleetRegistry = next
+      try { ctx.storage.set('watch.fleet', next) } catch { /* best effort */ }
+    }
+
+    function sweepFleet(data, t) {
+      const { lines, nextMap } = fleetSweep(fleetRegistry, data, t)
+      persistFleet(nextMap)
+      if (lines.length && $watchOn.get()) postWatchLines(lines, t)
+    }
+
     // (T-013: the watcher hooks live in Chip — no separate headless component;
     // Tip accepts exactly one child.)
 
@@ -273,9 +329,13 @@ export default {
       // ONE child, so the watcher can't be an extra JSX child (that shipped
       // as 'Primitive.button failed to slot onto its children' crash).
       const tasksQ = useTasks()
+      const fleetQ = useFleet()
       useEffect(() => {
         if (tasksQ?.data) sweepTasks(tasksQ.data.tasks || [], t)
       }, [tasksQ?.data])
+      useEffect(() => {
+        if (fleetQ?.data) sweepFleet(fleetQ.data, t)
+      }, [fleetQ?.data])
 
       return jsx(Tip, {
         label: t('chipTip'),
@@ -1026,7 +1086,12 @@ export default {
         watchDraftNote: () => 'iowap watch — no open chat composer, update kept as draft',
         palWatch: 'IOWAP: toggle task watch posts',
         watchOnMsg: () => 'iowap task watcher: ON — stage results + finals post to chat',
-        watchOffMsg: () => 'iowap task watcher: OFF — no chat posts'
+        watchOffMsg: () => 'iowap task watcher: OFF — no chat posts',
+        watchLongrun: (n, m) => `⏳ iowap task "${n}" running for ${m} min — still going`,
+        fleetOffline: (n, st) => `⚠️ iowap fleet: node "${n}" went ${st || 'offline'}`,
+        fleetBack: n => `✅ iowap fleet: node "${n}" is back online`,
+        fleetRelayDown: () => '⚠️ iowap fleet: relay unreachable',
+        fleetRelayBack: () => '✅ iowap fleet: relay reachable again'
       },
       de: {
         paneTitle: 'IOWAP Fleet',
@@ -1091,7 +1156,12 @@ export default {
         watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft',
         palWatch: 'IOWAP: Task-Watcher umschalten',
         watchOnMsg: () => 'IOWAP Task-Watcher: AN — Stage-Ergebnisse + Finals posten in den Chat',
-        watchOffMsg: () => 'IOWAP Task-Watcher: AUS — keine Chat-Posts'
+        watchOffMsg: () => 'IOWAP Task-Watcher: AUS — keine Chat-Posts',
+        watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft seit ${m} min — noch aktiv`,
+        fleetOffline: (n, st) => `⚠️ IOWAP-Flotte: Node "${n}" jetzt ${st || 'offline'}`,
+        fleetBack: n => `✅ IOWAP-Flotte: Node "${n}" wieder online`,
+        fleetRelayDown: () => '⚠️ IOWAP-Flotte: Relay nicht erreichbar',
+        fleetRelayBack: () => '✅ IOWAP-Flotte: Relay wieder erreichbar'
       }
     })
 
@@ -1235,4 +1305,4 @@ export default {
 
 // Test hook for tools/render-smoke.mjs — inert in production (the app loads
 // only the default export): exposes the pure watcher sweep for assertions.
-export const __test = { watchSweep, taskSnap, sameSnap }
+export const __test = { watchSweep, taskSnap, sameSnap, fleetSweep }

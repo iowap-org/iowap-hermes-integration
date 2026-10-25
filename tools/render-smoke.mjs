@@ -356,6 +356,51 @@ try {
       'failed final must post the stage failure and the final line')
   }
 
+  // T-013 longrun: non-terminal > 5 min → exactly one hint, then silent.
+  {
+    const assert = (cond, msg) => { if (!cond) throw new Error('T-013 longrun: ' + msg) }
+    const t = (...a) => a.join('|')
+    const row = s => ({ task_id: 'lr1', name: 'longtask', status: s, error: null, stages: [{ status: 'claimed', result_preview: '' }] })
+    const done = { task_id: 'lr1', name: 'longtask', status: 'completed', error: null, stages: [{ status: 'completed', result_preview: 'ok' }] }
+    let r = mod.__test.watchSweep({}, [row('running')], t, 1_000_000)
+    assert(!r.lines.length, 'first sight: no longrun hint')
+    r = mod.__test.watchSweep(r.nextMap, [row('running')], t, 1_000_000 + 6 * 60_000)
+    assert(r.lines.length === 1 && r.lines[0] === 'watchLongrun|longtask|6', 'longrun hint fires with minutes')
+    r = mod.__test.watchSweep(r.nextMap, [row('running')], t, 1_000_000 + 7 * 60_000)
+    assert(!r.lines.length, 'longrun hint must fire only once')
+    r = mod.__test.watchSweep(r.nextMap, [done], t, 1_000_000 + 8 * 60_000)
+    assert(r.lines.length === 2
+      && r.lines[0] === 'watchStage|longtask|lr1|1|completed|ok'
+      && r.lines[1] === 'watchFinal|longtask|lr1|completed|',
+      'final still posts after longrun (stage + final in one sweep)')
+  }
+
+  // T-014 fleet watch: node transitions + relay reachability.
+  {
+    const assert = (cond, msg) => { if (!cond) throw new Error('T-014 fleet: ' + msg) }
+    const t = (...a) => a.join('|')
+    const mk = n1st => ({
+      nodes: [
+        { node_id: 'n1', node_name: 'Alpha', role: 'node', status: n1st },
+        { node_id: 'n2', node_name: 'Beta', role: 'node', status: 'online' }
+      ],
+      health: { body: { ok: true } }, errors: []
+    })
+    let r = mod.__test.fleetSweep({}, mk('online'), t)
+    assert(!r.lines.length && r.nextMap.n1?.status === 'online' && !r.nextMap.n3, 'first sight silent')
+    r = mod.__test.fleetSweep(r.nextMap, mk('offline'), t)
+    assert(r.lines.length === 1 && r.lines[0] === 'fleetOffline|Alpha|offline', 'offline transition warns')
+    r = mod.__test.fleetSweep(r.nextMap, mk('online'), t)
+    assert(r.lines.length === 1 && r.lines[0] === 'fleetBack|Alpha', 'recovery posts')
+    const fdn = mk('online'); fdn.health = { error: 'health: conn refused', via: 'node-cli' }
+    let d = mod.__test.fleetSweep(r.nextMap, fdn, t)
+    assert(d.lines.length === 1 && d.lines[0] === 'fleetRelayDown', 'relay down warns')
+    d = mod.__test.fleetSweep(d.nextMap, fdn, t)
+    assert(!d.lines.length, 'relay down must not repeat')
+    d = mod.__test.fleetSweep(d.nextMap, mk('online'), t)
+    assert(d.lines.length === 1 && d.lines[0] === 'fleetRelayBack', 'relay recovery posts')
+  }
+
   // Error path (backend unreachable)
   globalThis.__FLEET_DATA__ = undefined
   globalThis.__TASKS_DATA__ = undefined
