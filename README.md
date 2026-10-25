@@ -25,6 +25,22 @@ IOWAP fleet data into the desktop app:
   this node — server-side T-005g scoping) instead of fetch errors.
 - **⌘K commands** — refresh fleet data, notify fleet status, open the pages
 
+## Task watcher & fleet watch
+
+- **Task watcher** — new-task acknowledgement, stage results and final
+  states are posted **automatically into the active chat** (`host.composer`
+  with user-typed authority, **fail-closed, never a broadcast**: without a
+  mounted composer the update lands as a draft plus a toast). Posted lines
+  carry the task id. Toggle: the switch on the Tasks page or ⌘K "IOWAP:
+  toggle task watch posts" (persisted; the sweep registry is persisted
+  too, so reloads and redeploys never double-post). Tasks non-terminal
+  for more than 5 minutes get a **one-time long-run hint**. Chat lines
+  follow the app locale (en/de/es/fr shipped).
+- **Fleet watch** — node status transitions warn in chat: a node going
+  offline posts a one-time ⚠️ warning, coming back posts a ✅ recovery
+  line; relay reachability is watched the same way. Runs on the fleet
+  data the chip/pane/page already poll — no extra polling.
+
 ## Architecture
 
 ```
@@ -84,6 +100,8 @@ section.
 mkdir -p ~/.hermes/desktop-plugins/iowap
 curl -o ~/.hermes/desktop-plugins/iowap/plugin.js \
   https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/desktop/plugin.js
+curl -o ~/.hermes/desktop-plugins/iowap/plugin.yaml \
+  https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/plugin.yaml
 ```
 
 **Backend half** (fleet data through node-cli):
@@ -100,7 +118,8 @@ hermes config set plugins.enabled '["iowap"]'
 **Update an installed plugin** (from a repo checkout):
 
 ```bash
-tools/deploy.sh   # copies both halves, verifies md5; frontend hot-reloads,
+tools/deploy.sh   # installs both halves + plugin.yaml, creates the parent
+                  # dirs, verifies md5; frontend hot-reloads,
                   # backend edits need one app restart
 ```
 
@@ -110,8 +129,11 @@ stays off.
 
 ## Status
 
-**v0.3.2** — chip + pane + fleet page + palette commands + **tasks page**
-(submit, track, delegated rows), live data via `node-cli`; release notes:
+**v0.4.0** — chip + pane + fleet page + palette commands + **tasks page**
+(submit, track, delegated rows), live data via `node-cli`; the **task
+watcher** posts submit/progress/final updates and fleet warnings (node
+down/back, relay reachability) into the chat, switchable from ⌘K or the
+Tasks page; UI in en/de/es/fr. Release notes:
 [CHANGELOG.md](CHANGELOG.md). Agent sessions
 join through the `iowap-task` bridge (repo `tools/`, installed at
 `~/.local/bin/iowap-task`) into a shared flock-protected track store. The

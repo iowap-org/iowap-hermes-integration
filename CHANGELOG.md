@@ -2,6 +2,40 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.4.0 — 2026-10-25
+
+### Added
+- **Task watcher**: stage results and final task states are posted
+  automatically into the active chat via `host.composer` (send with the
+  user's typing authority, fail-closed — never a broadcast; without a
+  mounted composer the update lands as a draft plus a toast). Posted
+  lines carry the task id. Toggle via the Tasks-page switch or a ⌘K
+  command with a live on/off detail; the preference and the sweep
+  registry are persisted, so reloads and redeploys never double-post.
+- **Fleet watch**: node status transitions (online → anything else = one
+  ⚠️ warning, back online = ✅ recovery) and relay reachability
+  (unreachable → one ⚠️, reachable again → ✅) post under the same
+  toggle. Runs on the fleet query the chip/pane/page already poll — no
+  extra polling.
+- **Long-run hint**: a task non-terminal for more than 5 minutes posts a
+  one-time ⏳ hint with the run time; its final post is unaffected.
+- Locales: full **Spanish** and **French** bundles (chat lines
+  included); status enums stay English. Other app locales fall back to
+  English.
+
+### Fixed
+- The task form consumes the backend-computed `selectable` flag (with
+  the legacy `type !== 'native'` filter only as fallback), instead of
+  re-deriving the vocabulary split in the frontend.
+- `tools/deploy.sh` creates the parent directories itself and installs
+  `plugin.yaml` (install + md5 pair) — the deployed desktop half no
+  longer drifts below the repo version.
+
+### Changed
+- Watch/fleet chat lines, the toggle label and the ⌘K command follow the
+  app locale deliberately (en/de/es/fr bundles; everything else falls
+  back to English).
+
 ## 0.3.2 — 2026-10-16
 
 ### Fixed
