@@ -690,7 +690,9 @@ export default {
       const formErr = useValue($formErr)
       const trackId = useValue($trackId)
 
-      const caps = (activityQ.data?.capabilities || []).filter(c => c.type !== 'native')
+      // Backend-first: consume the computed `selectable` flag (T-010); the
+      // type check is only the fallback for legacy responses without the flag.
+      const caps = (activityQ.data?.capabilities || []).filter(c => c.selectable ?? (c.type !== 'native'))
 
       const submit = useMutation({
         mutationFn: body => ctx.rest('/tasks/submit', { method: 'POST', body, timeoutMs: 35000 }),

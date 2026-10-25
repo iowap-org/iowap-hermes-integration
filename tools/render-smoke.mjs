@@ -185,6 +185,16 @@ function renderContribution(c) {
   renderElement(c.render(), 0)
 }
 
+// T-010 assertion helper: collect every visible string from a rendered tree
+// (same walk as renderElement — function components must be invoked first).
+function collectText(el, depth, out) {
+  if (depth > MAX_DEPTH || el == null || typeof el === 'boolean') return out
+  if (typeof el === 'string' || typeof el === 'number') { out.push(String(el)); return out }
+  if (Array.isArray(el)) { for (const c of el) collectText(c, depth + 1, out); return out }
+  if (typeof el.type === 'function') return collectText(el.type(el.props || {}), depth + 1, out)
+  return collectText((el.props || {}).children, depth + 1, out)
+}
+
 try {
   // Empty fleet (loading state)
   globalThis.__FLEET_DATA__ = undefined
@@ -249,10 +259,55 @@ try {
         description: 'Relay storage op — not submittable here.',
         fields: {},
         providers: [{ node_id: 'n1', node_name: 'Node-41C', available: true, queues: [] }]
+      },
+      {
+        name: 'proxy.admin', type: 'proxy', provider_count: 1, queues_total: 0, selectable: false,
+        description: 'Internal proxy op off the submit vocabulary.',
+        fields: {},
+        providers: [{ node_id: 'n1', node_name: 'Node-41C', available: true, queues: [] }]
+      },
+      {
+        name: 'legacy.info', type: 'task', provider_count: 1, queues_total: 0, selectable: false,
+        description: 'Backend overrode a known type with the flag.',
+        fields: {},
+        providers: [{ node_id: 'n0', node_name: 'node-23a', available: true, queues: [] }]
+      },
+      {
+        name: 'nostamp.legacy', type: 'tool', provider_count: 1, queues_total: 0,
+        description: 'Legacy backend response without a selectable stamp.',
+        fields: {},
+        providers: [{ node_id: 'n0', node_name: 'node-23a', available: true, queues: [] }]
       }
     ]
   }
   for (const c of contributionsWithRender) renderContribution(c)
+
+  // T-010 assertion: the task form's capability select must consume the
+  // backend-computed `selectable` flag, not guess from the raw `type` value —
+  // scoped to `SelectContent`, because the fleet page legitimately lists the
+  // FULL capability inventory (unfiltered) elsewhere. proxy.admin (new type)
+  // and legacy.info (flagged off) are invisible in the form; nostamp.legacy
+  // (no flag field — legacy backend) falls back to the type filter and shows.
+  function collectSelectContentText(el, depth, out) {
+    if (depth > MAX_DEPTH || el == null || typeof el === 'boolean') return out
+    if (Array.isArray(el)) { for (const c of el) collectSelectContentText(c, depth + 1, out); return out }
+    if (typeof el.type === 'function') return collectSelectContentText(el.type(el.props || {}), depth + 1, out)
+    const props = (el.props || {})
+    if (el.type === 'SelectContent') return collectText(props.children, depth + 1, out)
+    return collectSelectContentText(props.children, depth + 1, out)
+  }
+  {
+    const texts = []
+    for (const c of contributionsWithRender) collectSelectContentText(c.render(), 0, texts)
+    const blob = texts.join('\n')
+    for (const h of ['proxy.admin', 'legacy.info']) {
+      if (blob.includes(h)) throw new Error(
+        `T-010: backend-flagged non-selectable cap "${h}" rendered in the task form — filter must consume selectable, not type`)
+    }
+    for (const s of ['draft.ai', 'nostamp.legacy']) {
+      if (!blob.includes(s)) throw new Error(`T-010: expected selectable cap "${s}" missing from the task form render`)
+    }
+  }
 
   // Error path (backend unreachable)
   globalThis.__FLEET_DATA__ = undefined
