@@ -1023,7 +1023,10 @@ export default {
         watchSubmitted: n => `IOWAP watch: tracking "${n}" — updates will post here.`,
         watchStage: (n, i, s, p) => `IOWAP task "${n}": stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
         watchFinal: (n, s, e) => `IOWAP task "${n}": ${s}${e ? ` — ${e}` : ''}`,
-        watchDraftNote: () => 'iowap watch — no open chat composer, update kept as draft'
+        watchDraftNote: () => 'iowap watch — no open chat composer, update kept as draft',
+        palWatch: 'IOWAP: toggle task watch posts',
+        watchOnMsg: () => 'iowap task watcher: ON — stage results + finals post to chat',
+        watchOffMsg: () => 'iowap task watcher: OFF — no chat posts'
       },
       de: {
         paneTitle: 'IOWAP Fleet',
@@ -1085,7 +1088,10 @@ export default {
         watchSubmitted: n => `IOWAP watch: überwache "${n}" — Updates laufen hier ein.`,
         watchStage: (n, i, s, p) => `IOWAP-Task "${n}": Stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
         watchFinal: (n, s, e) => `IOWAP-Task "${n}": ${s}${e ? ` — ${e}` : ''}`,
-        watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft'
+        watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft',
+        palWatch: 'IOWAP: Task-Watcher umschalten',
+        watchOnMsg: () => 'IOWAP Task-Watcher: AN — Stage-Ergebnisse + Finals posten in den Chat',
+        watchOffMsg: () => 'IOWAP Task-Watcher: AUS — keine Chat-Posts'
       }
     })
 
@@ -1204,6 +1210,23 @@ export default {
         run: () => {
           haptic('tap')
           host.navigate('/iowap-tasks')
+        }
+      }
+    })
+    // T-013: quick toggle for the task watcher (live on/off in the detail row).
+    ctx.register({
+      id: 'cmd-watch-toggle',
+      area: PALETTE_AREA,
+      data: {
+        id: 'iowap.watch-toggle',
+        label: ctx.i18n.t('palWatch'),
+        keywords: ['iowap', 'watch', 'task', 'chat', 'toggle'],
+        detail: () => ($watchOn.get() ? 'on' : 'off'),
+        detailVariant: 'state',
+        run: () => {
+          setWatchOn(!$watchOn.get())
+          haptic('tap')
+          host.notify({ kind: 'info', message: ctx.i18n.t($watchOn.get() ? 'watchOnMsg' : 'watchOffMsg') })
         }
       }
     })
