@@ -1147,13 +1147,22 @@ export default {
         setupStep1: '1. Install the node framework: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
         setupStep2: '2. Register against a relay: node-cli node register --base-url <relay-url>',
         setupStep3: '3. Reload this app — the fleet view appears automatically.',
-        setupDocs: 'Docs'
-        // T-013/T-014 note: watch/fleet chat-line keys (watchSubmitted,
-        // watchStage, watchFinal, watchLongrun, watchDraftNote, watchOnMsg,
-        // watchOffMsg, fleetOffline, fleetBack, fleetRelayDown,
-        // fleetRelayBack) are deliberately EN-only — chat messages posted
-        // into the agent conversation stay English by design (Ronny,
-        // 2026-10-25); the i18n resolver falls back to the en bundle.
+        setupDocs: 'Docs',
+        // Task-Watcher (T-013) — chat lines follow the APP LOCALE on purpose
+        // (i18n resolver: app locale → en → raw key; Ronny 2026-10-25).
+        watchToggleLabel: 'Task-Updates in den Chat posten',
+        watchSubmitted: (n, tid) => `IOWAP watch: überwache "${n}" [${tid}] — Updates laufen hier ein.`,
+        watchStage: (n, tid, i, s, p) => `IOWAP-Task "${n}" [${tid}]: Stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
+        watchFinal: (n, tid, s, e) => `IOWAP-Task "${n}" [${tid}]: ${s}${e ? ` — ${e}` : ''}`,
+        watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft',
+        palWatch: 'IOWAP: Task-Watcher umschalten',
+        watchOnMsg: () => 'IOWAP Task-Watcher: AN — Stage-Ergebnisse + Finals posten in den Chat',
+        watchOffMsg: () => 'IOWAP Task-Watcher: AUS — keine Chat-Posts',
+        watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft seit ${m} min — noch aktiv`,
+        fleetOffline: (n, st) => `⚠️ IOWAP-Flotte: Node "${n}" jetzt ${st || 'offline'}`,
+        fleetBack: n => `✅ IOWAP-Flotte: Node "${n}" wieder online`,
+        fleetRelayDown: () => '⚠️ IOWAP-Flotte: Relay nicht erreichbar',
+        fleetRelayBack: () => '✅ IOWAP-Flotte: Relay wieder erreichbar'
       }
     })
 
