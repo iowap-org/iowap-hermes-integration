@@ -364,6 +364,10 @@ try {
     const done = { task_id: 'lr1', name: 'longtask', status: 'completed', error: null, stages: [{ status: 'completed', result_preview: 'ok' }] }
     let r = mod.__test.watchSweep({}, [row('running')], t, 1_000_000)
     assert(!r.lines.length, 'first sight: no longrun hint')
+    // QUEUED (pending) task must NOT get a longrun hint — that was the false alarm
+    const qr = mod.__test.watchSweep({}, [{ task_id: 'lr2', name: 'queuedtask', status: 'pending', error: null, stages: [] }], t, 1_000_000)
+    const qr2 = mod.__test.watchSweep(qr.nextMap, [{ task_id: 'lr2', name: 'queuedtask', status: 'pending', error: null, stages: [] }], t, 1_000_000 + 30 * 60_000)
+    assert(!qr2.lines.length, 'pending (queued, unclaimed) task must not fire longrun hint')
     r = mod.__test.watchSweep(r.nextMap, [row('running')], t, 1_000_000 + 6 * 60_000)
     assert(r.lines.length === 1 && r.lines[0] === 'watchLongrun|longtask|6', 'longrun hint fires with minutes')
     r = mod.__test.watchSweep(r.nextMap, [row('running')], t, 1_000_000 + 7 * 60_000)

@@ -150,7 +150,7 @@ function watchSweep(prevMap, tasks, t, now = Date.now()) {
     const snap = taskSnap(x)
     nextMap[x.task_id] = { ...snap, seenAt: prev?.seenAt ?? now, warned: prev?.warned ?? false }
     const book = nextMap[x.task_id]
-    if (prev && !book.warned && !TERMINAL_TASK.includes(snap.status) && now - book.seenAt > LONGRUN_MS) {
+    if (prev && !book.warned && snap.status === 'running' && now - book.seenAt > LONGRUN_MS) {
       book.warned = true
       lines.push(t('watchLongrun', x.name || x.task_id, Math.max(1, Math.round((now - book.seenAt) / 60_000))))
     }
@@ -1087,7 +1087,7 @@ export default {
         palWatch: 'IOWAP: toggle task watch posts',
         watchOnMsg: () => 'iowap task watcher: ON — stage results + finals post to chat',
         watchOffMsg: () => 'iowap task watcher: OFF — no chat posts',
-        watchLongrun: (n, m) => `⏳ iowap task "${n}" running for ${m} min — still going`,
+        watchLongrun: (n, m) => `⏳ iowap task "${n}" running for at least ${m} min — still going`,
         fleetOffline: (n, st) => `⚠️ iowap fleet: node "${n}" went ${st || 'offline'}`,
         fleetBack: n => `✅ iowap fleet: node "${n}" is back online`,
         fleetRelayDown: () => '⚠️ iowap fleet: relay unreachable',
@@ -1158,7 +1158,7 @@ export default {
         palWatch: 'IOWAP: Task-Watcher umschalten',
         watchOnMsg: () => 'IOWAP Task-Watcher: AN — Stage-Ergebnisse + Finals posten in den Chat',
         watchOffMsg: () => 'IOWAP Task-Watcher: AUS — keine Chat-Posts',
-        watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft seit ${m} min — noch aktiv`,
+        watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft mindestens seit ${m} min — noch aktiv`,
         fleetOffline: (n, st) => `⚠️ IOWAP-Flotte: Node "${n}" jetzt ${st || 'offline'}`,
         fleetBack: n => `✅ IOWAP-Flotte: Node "${n}" wieder online`,
         fleetRelayDown: () => '⚠️ IOWAP-Flotte: Relay nicht erreichbar',
@@ -1228,7 +1228,7 @@ export default {
         palWatch: 'IOWAP: alternar avisos de tareas',
         watchOnMsg: () => 'IOWAP task watcher: ON — los resultados y finales de fases se publican en el chat',
         watchOffMsg: () => 'IOWAP task watcher: OFF — sin publicaciones en el chat',
-        watchLongrun: (n, m) => `⏳ Tarea IOWAP "${n}" en ejecución desde hace ${m} min — sigue activa`,
+        watchLongrun: (n, m) => `⏳ Tarea IOWAP "${n}" en ejecución desde hace al menos ${m} min — sigue activa`,
         fleetOffline: (n, st) => `⚠️ Flota IOWAP: el nodo "${n}" está ${st || 'offline'}`,
         fleetBack: n => `✅ Flota IOWAP: el nodo "${n}" vuelve a estar en línea`,
         fleetRelayDown: () => '⚠️ Flota IOWAP: relay inaccesible',
@@ -1298,7 +1298,7 @@ export default {
         palWatch: 'IOWAP : basculer les avis de tâches',
         watchOnMsg: () => `Observateur de tâches IOWAP : ON — les résultats d'étapes et finaux sont publiés dans le chat`,
         watchOffMsg: () => 'Observateur de tâches IOWAP : OFF — aucune publication dans le chat',
-        watchLongrun: (n, m) => `⏳ Tâche IOWAP "${n}" en cours depuis ${m} min — toujours active`,
+        watchLongrun: (n, m) => `⏳ Tâche IOWAP "${n}" en cours depuis au moins ${m} min — toujours active`,
         fleetOffline: (n, st) => `⚠️ Flotte IOWAP : le nœud "${n}" est passé ${st || 'hors ligne'}`,
         fleetBack: n => `✅ Flotte IOWAP : le nœud "${n}" est de retour en ligne`,
         fleetRelayDown: () => '⚠️ Flotte IOWAP : relay injoignable',
