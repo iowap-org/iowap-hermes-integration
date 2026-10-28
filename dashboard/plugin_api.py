@@ -712,6 +712,20 @@ def _tracked_list() -> list[str]:
             ):
                 meta.pop(tid, None)
                 continue
+            # Tombstones: no cached fetch at all (a task the relay 404s leaves
+            # no _tasks_state entry, so the terminal-status prune above never
+            # matches) and the row rotted past the same TTL — old relay tasks
+            # would otherwise render "fetch_error" forever, feed the watcher's
+            # longrun logic and bloat the /tasks list.
+            # Rows with no usable submitted_at stay (conservative default).
+            if not ent:
+                try:
+                    submitted = float(m.get("submitted_at") or 0)
+                except (TypeError, ValueError):
+                    submitted = 0.0
+                if submitted > 0 and now_wall - submitted > _TASKS_TTL:
+                    meta.pop(tid, None)
+                    continue
         keep.append(tid)
     if len(keep) != len(store["ids"]) or meta != store["meta"]:
         _track_store_write(keep, meta)

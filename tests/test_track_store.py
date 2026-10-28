@@ -98,6 +98,26 @@ def test_tracked_list_evicts_stale_cache_entries(track_file):
     assert "t1" in plugin_api._tasks_state  # still tracked → cache kept
 
 
+def test_fetch_error_tombstones_pruned_after_ttl(track_file):
+    # a task whose fetches leave NO _tasks_state entry (relay 404s → the
+    # /tasks row renders "fetch_error" forever) must fall out of the store
+    # after the same TTL as finished task caches — otherwise dead rows
+    # feed the watcher's longrun logic and bloat the Tasks page
+    old = time.time() - (plugin_api._TASKS_TTL + 600)
+    plugin_api._track_store_merge("dead404", {"submitted_at": old, "capability": "x.ai"})
+    plugin_api._track_store_merge("fresh404", {"submitted_at": time.time(), "capability": "x.ai"})
+    assert plugin_api._tracked_list() == ["fresh404"]
+    store = plugin_api._track_store_read()
+    assert "dead404" not in store["meta"] and "fresh404" in store["meta"]
+
+
+def test_fetch_error_tombstones_kept_before_ttl(track_file):
+    # without any cache entry but still fresh: keep — a mid-flight task
+    # that has simply not been fetched yet must not be dropped
+    plugin_api._track_store_merge("f1", {"submitted_at": time.time(), "capability": "x.ai"})
+    assert plugin_api._tracked_list() == ["f1"]
+
+
 @pytest.mark.asyncio
 async def test_tasks_endpoint_renders_delegated_row(track_file, monkeypatch):
     plugin_api._track_store_merge("dX", {

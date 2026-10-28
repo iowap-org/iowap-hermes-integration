@@ -2,6 +2,27 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.4.1 — 2026-10-25
+
+### Fixed
+- **Longrun hint no longer lies about queued tasks**: the ⏳ hint fired for
+  **pending (queued, unclaimed) tasks** after 5 min of watcher sight —
+  during a 17-task queue pileup that meant 17 "running for 5 min" lines
+  for tasks that had not started at all. The hint now fires only for
+  tasks whose status is `running` (actually claimed by a node). Live
+  false-positive reproduced: ⏳ for a task that had finished long ago
+  (it sat in the tracker as a `fetch_error` tombstone — see below).
+- **The hint's minute count is honest now**: it measures watcher sight
+  time, so the wording says "running for at least N min" (any earlier
+  queue time is not measurable from the watcher).
+- **`fetch_error` tombstones are pruned**: a task the relay now 404s
+  leaves no cache entry, so the finished-task prune never matched and the
+  row stayed in `/tasks` (and in the watcher registry) forever, feeding
+  the longrun bug and bloating the Tasks page. Rows aged past the 6 h TTL
+  without any cached status now fall out of the store; rows with no
+  usable `submitted_at` stay (conservative default). RED→GREEN proven
+  with two new store tests (31 total).
+
 ## 0.4.0 — 2026-10-25
 
 ### Added
