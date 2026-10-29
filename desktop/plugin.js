@@ -337,7 +337,7 @@ export default {
       persistWatch(nextMap)
       if (!lines.length) return
       logLines(lines, 'tasks', t)
-      const chatOn = $cfgTasksChatOn()
+      const chatOn = cfgTasksChatOn()
       const notifyOn = $cfgTasksNotify.get()
       if (!chatOn && !notifyOn) return
       // group by origin target (null = no origin recorded) → one delivery
@@ -400,7 +400,7 @@ export default {
       if (!lines.length) return
       logLines(lines, 'fleet', t)
       const notifyOn = $cfgFleetNotify.get()
-      const chatOn = $cfgFleetChatOn()
+      const chatOn = cfgFleetChatOn()
       if (!notifyOn && !chatOn) return
       if (!chatOn) {
         for (const line of lines) {
