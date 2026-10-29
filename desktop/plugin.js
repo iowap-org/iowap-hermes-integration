@@ -968,7 +968,6 @@ export default {
       const nameTxt = useValue($name)
       const formErr = useValue($formErr)
       const trackId = useValue($trackId)
-      const watchOn = useValue($watchOn)
 
       // Backend-first: consume the computed `selectable` flag (T-010); the
       // type check is only the fallback for legacy responses without the flag.
@@ -1011,18 +1010,6 @@ export default {
         children: [
           jsxs('div', { className: 'flex items-center gap-3', children: [
             jsx('div', { className: 'text-base font-medium', children: t('tasksTitle') }),
-            jsxs('label', {
-              className: 'flex items-center gap-1.5 text-xs text-(--ui-text-tertiary)',
-              children: [
-                jsx(Switch, {
-                  id: 'iowap-watch',
-                  size: 'xs',
-                  checked: watchOn,
-                  onCheckedChange: v => { haptic('tap'); setWatchOn(v) }
-                }),
-                t('watchToggleLabel')
-              ]
-            }),
             jsx('span', { className: 'flex-1' }),
             jsx(Button, {
               disabled: tasksQ.isFetching,
@@ -1186,14 +1173,10 @@ export default {
         setupStep3: '3. Reload this app — the fleet view appears automatically.',
         setupDocs: 'Docs',
         // task watcher (T-013)
-        watchToggleLabel: 'post task updates to chat',
         watchSubmitted: (n, tid) => `IOWAP watch: tracking "${n}" [${tid}] — updates will post here.`,
         watchStage: (n, tid, i, s) => `IOWAP task "${n}" [${tid}]: stage ${i} → ${s}`,
         watchFinal: (n, tid, s) => `IOWAP task "${n}" [${tid}]: ${s}`,
         watchDraftNote: () => 'iowap watch — no open chat composer, update kept as draft',
-        palWatch: 'IOWAP: toggle task watch posts',
-        watchOnMsg: () => 'iowap task watcher: ON — stage results + finals post to chat',
-        watchOffMsg: () => 'iowap task watcher: OFF — no chat posts',
         // notifications page (T-016)
         notifTitle: 'IOWAP Notifications',
         notifHint: 'collects task and fleet messages; everything is OFF until you enable it here',
@@ -1211,6 +1194,7 @@ export default {
         logTitle: 'Message log',
         logClear: 'Clear',
         logEmpty: 'no messages collected yet',
+        palNotif: 'IOWAP: open notifications',
         watchLongrun: (n, m) => `⏳ iowap task "${n}" running for at least ${m} min — still going`,
         fleetOffline: (n, st) => `⚠️ iowap fleet: node "${n}" went ${st || 'offline'}`,
         fleetBack: n => `✅ iowap fleet: node "${n}" is back online`,
@@ -1274,14 +1258,10 @@ export default {
         setupDocs: 'Docs',
         // Task-Watcher (T-013) — chat lines follow the APP LOCALE on purpose
         // (i18n resolver: app locale → en → raw key; Ronny 2026-10-25).
-        watchToggleLabel: 'Task-Updates in den Chat posten',
         watchSubmitted: (n, tid) => `IOWAP watch: überwache "${n}" [${tid}] — Updates laufen hier ein.`,
         watchStage: (n, tid, i, s) => `IOWAP-Task "${n}" [${tid}]: Stage ${i} → ${s}`,
         watchFinal: (n, tid, s) => `IOWAP-Task "${n}" [${tid}]: ${s}`,
         watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft',
-        palWatch: 'IOWAP: Task-Watcher umschalten',
-        watchOnMsg: () => 'IOWAP Task-Watcher: AN — Stage-Ergebnisse + Finals posten in den Chat',
-        watchOffMsg: () => 'IOWAP Task-Watcher: AUS — keine Chat-Posts',
         // Benachrichtigungsseite (T-016)
         notifTitle: 'IOWAP-Benachrichtigungen',
         notifHint: 'sammelt Task- und Flotten-Meldungen; alles ist AUS, bis du es hier einschaltest',
@@ -1299,6 +1279,7 @@ export default {
         logTitle: 'Meldungs-Log',
         logClear: 'Leeren',
         logEmpty: 'noch keine Meldungen gesammelt',
+        palNotif: 'IOWAP: Benachrichtigungen öffnen',
         watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft mindestens seit ${m} min — noch aktiv`,
         fleetOffline: (n, st) => `⚠️ IOWAP-Flotte: Node "${n}" jetzt ${st || 'offline'}`,
         fleetBack: n => `✅ IOWAP-Flotte: Node "${n}" wieder online`,
@@ -1361,14 +1342,10 @@ export default {
         setupStep3: '3. Recarga esta app — la vista de flota aparece automáticamente.',
         setupDocs: 'Docs',
         // Task-Watcher (T-013) — las líneas del chat siguen el locale de la app
-        watchToggleLabel: 'publicar actualizaciones de tareas en el chat',
         watchSubmitted: (n, tid) => `IOWAP watch: rastreando "${n}" [${tid}] — las actualizaciones aparecerán aquí.`,
         watchStage: (n, tid, i, s) => `Tarea IOWAP "${n}" [${tid}]: fase ${i} → ${s}`,
         watchFinal: (n, tid, s) => `Tarea IOWAP "${n}" [${tid}]: ${s}`,
         watchDraftNote: () => 'iowap watch — no hay composer de chat abierto, actualización guardada como borrador',
-        palWatch: 'IOWAP: alternar avisos de tareas',
-        watchOnMsg: () => 'IOWAP task watcher: ON — los resultados y finales de fases se publican en el chat',
-        watchOffMsg: () => 'IOWAP task watcher: OFF — sin publicaciones en el chat',
         // página de notificaciones (T-016)
         notifTitle: 'Notificaciones IOWAP',
         notifHint: 'recopila mensajes de tareas y de la flota; todo está apagado hasta que lo actives aquí',
@@ -1386,6 +1363,7 @@ export default {
         logTitle: 'Registro de mensajes',
         logClear: 'Vaciar',
         logEmpty: 'aún no hay mensajes recopilados',
+        palNotif: 'IOWAP: abrir notificaciones',
         watchLongrun: (n, m) => `⏳ Tarea IOWAP "${n}" en ejecución desde hace al menos ${m} min — sigue activa`,
         fleetOffline: (n, st) => `⚠️ Flota IOWAP: el nodo "${n}" está ${st || 'offline'}`,
         fleetBack: n => `✅ Flota IOWAP: el nodo "${n}" vuelve a estar en línea`,
@@ -1448,14 +1426,10 @@ export default {
         setupStep3: '3. Rechargez cette app — la vue flotte apparaît automatiquement.',
         setupDocs: 'Docs',
         // Observateur de tâches (T-013) — les lignes de chat suivent le locale de l'app
-        watchToggleLabel: 'publier les mises à jour des tâches dans le chat',
         watchSubmitted: (n, tid) => `IOWAP watch : suivi de "${n}" [${tid}] — les mises à jour s'afficheront ici.`,
         watchStage: (n, tid, i, s) => `Tâche IOWAP "${n}" [${tid}] : étape ${i} → ${s}`,
         watchFinal: (n, tid, s) => `Tâche IOWAP "${n}" [${tid}] : ${s}`,
         watchDraftNote: () => 'iowap watch — aucun composer de chat ouvert, mise à jour en brouillon',
-        palWatch: 'IOWAP : basculer les avis de tâches',
-        watchOnMsg: () => 'Observateur de tâches IOWAP : ON — les résultats d\'étapes et finaux sont publiés dans le chat',
-        watchOffMsg: () => 'Observateur de tâches IOWAP : OFF — aucune publication dans le chat',
         // page de notifications (T-016)
         notifTitle: 'Notifications IOWAP',
         notifHint: 'collecte les messages des tâches et de la flotte ; tout est désactivé jusqu\'à activation ici',
@@ -1473,6 +1447,7 @@ export default {
         logTitle: 'Journal des messages',
         logClear: 'Vider',
         logEmpty: 'aucun message collecté pour l\'instant',
+        palNotif: 'IOWAP : ouvrir les notifications',
         watchLongrun: (n, m) => `⏳ Tâche IOWAP "${n}" en cours depuis au moins ${m} min — toujours active`,
         fleetOffline: (n, st) => `⚠️ Flotte IOWAP : le nœud "${n}" est passé ${st || 'hors ligne'}`,
         fleetBack: n => `✅ Flotte IOWAP : le nœud "${n}" est de retour en ligne`,
@@ -1755,20 +1730,23 @@ export default {
         }
       }
     })
-    // T-013: quick toggle for the task watcher (live on/off in the detail row).
+    // T-016: config lives on the notifications page — the palette gets a
+    // jump instead of an inline toggle (single place of configuration).
     ctx.register({
-      id: 'cmd-watch-toggle',
+      id: 'cmd-notif',
       area: PALETTE_AREA,
       data: {
-        id: 'iowap.watch-toggle',
-        label: ctx.i18n.t('palWatch'),
-        keywords: ['iowap', 'watch', 'task', 'chat', 'toggle'],
-        detail: () => ($watchOn.get() ? 'on' : 'off'),
+        id: 'iowap.notif',
+        label: ctx.i18n.t('palNotif'),
+        keywords: ['iowap', 'watch', 'notification', 'chat', 'settings'],
+        detail: () => {
+          const n = (notifLog || []).length
+          return n ? `${n} msgs` : '0'
+        },
         detailVariant: 'state',
         run: () => {
-          setWatchOn(!$watchOn.get())
           haptic('tap')
-          host.notify({ kind: 'info', message: ctx.i18n.t($watchOn.get() ? 'watchOnMsg' : 'watchOffMsg') })
+          host.navigate('/iowap-notifications')
         }
       }
     })
