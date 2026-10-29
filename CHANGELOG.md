@@ -2,6 +2,40 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.4.2 — 2026-10-29 (PR #144628 review response)
+
+### Changed — consent model overhauled (teknium1 review, all three points)
+- **Everything OFF by default.** The watcher no longer posts anywhere until
+  the user opts in on the new **IOWAP Notifications page**
+  (`/iowap-notifications`, sidebar + ⌘K). Composer posts carry the user's
+  typing authority, so they require the user's explicit enablement.
+- **No more `submit(null, …)` auto-addressing.** Task messages are routed
+  into **the session that submitted the task**: agent submits carry their
+  session id (`tools/iowap-task --session <id>`, MCP `task_submit(
+  session_id=…)`), the backend rides it through `/tasks` as
+  `session_id`, and the watcher posts **per task, per origin session**
+  (grouped so one sweep yields one delivery per distinct target; a
+  not-mounted session drops the post fail-closed). Tasks-Page submits
+  default to **draft**; a **draft | direct** switch and an optional
+  manual session id live on the notifications page.
+- **Node output no longer enters chat at all.** Posts are event-only
+  lines — task name, task id, stage/final status. No `result_preview`, no
+  raw `error` text rides in a user-typed message (the reviewer's
+  untrusted-quotation point solved by eliminating the channel entirely;
+  details are pulled via `task_result`/Tasks page when needed).
+- **Fleet/relay/long-run messages go to `host.notify`** (toast /
+  notification center) by default; optional chat posts into one
+  explicitly configured session id (fleet monitoring section).
+- The notifications page **collects every message** from both areas in a
+  bounded log (100 entries, clearable) — the one place to see what the
+  watcher reported, independent of chat/notify routing.
+- i18n: all new settings/log strings in en/de/es/fr.
+
+### Fixed
+- The ⌘K toggle and the Tasks-page switch now drive the tasks-chat gate
+  (`notify.tasks.chat`) instead of the retired `watch.enabled` key; fresh
+  installs start with the watcher fully OFF.
+
 ## 0.4.1 — 2026-10-25
 
 ### Fixed

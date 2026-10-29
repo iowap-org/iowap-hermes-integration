@@ -141,8 +141,18 @@ const LONGRUN_MS = 5 * 60_000
 // (seenAt/warned) rides inside the registry values; duplication is prevented
 // by the stage/task transition guards, not by a whole-snapshot compare.
 // Longrun: non-terminal > 5 min → ONE hint per task.
+// Pure sweep: (prevMap, tasks, t, now) → { lines, targets, nextMap }. One
+// line per meaningful transition — event-only, NO node output (PR #144628
+// review point 3: result_preview/error never enter chat; whoever needs the
+// details pulls them via task_result). `targets` carries the per-line
+// origin session id (from the row's session_id meta) or null; the caller
+// groups lines by target for scoped delivery. Watcher bookkeeping
+// (seenAt/warned) rides inside the registry values; duplication is
+// prevented by the stage/task transition guards. Longrun: only for tasks
+// with status running (actually claimed) > 5 min → ONE hint per task.
 function watchSweep(prevMap, tasks, t, now = Date.now()) {
   const lines = []
+  const targets = []
   const nextMap = {}
   for (const x of tasks || []) {
     if (!x?.task_id) continue
@@ -153,6 +163,7 @@ function watchSweep(prevMap, tasks, t, now = Date.now()) {
     if (prev && !book.warned && snap.status === 'running' && now - book.seenAt > LONGRUN_MS) {
       book.warned = true
       lines.push(t('watchLongrun', x.name || x.task_id, Math.max(1, Math.round((now - book.seenAt) / 60_000))))
+      targets.push(x.session_id || null)
     }
     if (!prev) continue // first sight: register only, never back-post
     const name = x.name || x.task_id
@@ -160,14 +171,17 @@ function watchSweep(prevMap, tasks, t, now = Date.now()) {
       const before = prev.stages?.[i]
       const now = snap.stages[i]
       if (!now || before === now || !POSTED_STAGE.includes(now)) return
-      const preview = String(st?.result_preview || '').trim()
-      lines.push(t('watchStage', name, x.task_id, i + 1, now, preview))
+      // no result_preview here — event only
+      lines.push(t('watchStage', name, x.task_id, i + 1, now))
+      targets.push(x.session_id || null)
     })
     if (prev.status !== snap.status && TERMINAL_TASK.includes(snap.status)) {
-      lines.push(t('watchFinal', name, x.task_id, snap.status, String(x.error || '').trim()))
+      // no error text here — event only
+      lines.push(t('watchFinal', name, x.task_id, snap.status))
+      targets.push(x.session_id || null)
     }
   }
-  return { lines, nextMap }
+  return { lines, targets, nextMap }
 }
 
 // Pure fleet watch: (prevMap, data, t) → { lines, nextMap }. Node status
@@ -257,12 +271,36 @@ export default {
     // -----------------------------------------------------------------
     let watchRegistry = {}
     try { watchRegistry = ctx.storage.get('watch.registry') || {} } catch { /* memory-only */ }
-    const $watchOn = atom(true)
-    try { $watchOn.set(ctx.storage.get('watch.enabled') !== false) } catch { /* default on */ }
+    // T-016: '$watchOn' is the tasks-chat quick gate (⌘K toggle / Tasks page
+    // switch). ALL chat/notify gates are OFF unless explicitly stored —
+    // composer posts carry the user's typing authority, so nothing posts
+    // into any chat until the user opted in (PR #144628 review point 1).
+    const $watchOn = atom(false)
+    try { $watchOn.set(ctx.storage.get('notify.tasks.chat') === true) } catch { /* default OFF */ }
 
     function setWatchOn(v) {
       $watchOn.set(v)
-      try { ctx.storage.set('watch.enabled', v) } catch { /* best effort */ }
+      try { ctx.storage.set('notify.tasks.chat', v) } catch { /* best effort */ }
+    }
+
+    // Notification config ( Ronny spec, three page): notify = toast /
+    // notification center; chat = composer post. Tasks: origin | manual
+    // session + draft | direct. Fleet: one manual session id. All OFF.
+    function cfg(key, fallback) {
+      try { return ctx.storage.get(key) ?? fallback } catch { return fallback }
+    }
+    const $cfgTasksTarget = atom(cfg('notify.tasks.target', 'origin'))  // 'origin' | 'manual'
+    const $cfgTasksSession = atom(cfg('notify.tasks.session', ''))
+    const $cfgTasksMode = atom(cfg('notify.tasks.mode', 'draft'))       // 'draft' | 'direct'
+    const $cfgTasksNotify = atom(cfg('notify.tasks.enabled', false))
+    const $cfgFleetNotify = atom(cfg('notify.fleet.enabled', false))
+    const $cfgFleetChat = atom(cfg('notify.fleet.chat', false))
+    const $cfgFleetSession = atom(cfg('notify.fleet.session', ''))
+    const cfgTasksChatOn = () => $watchOn.get()
+    const cfgFleetChatOn = () => $cfgFleetChat.get()
+    function setCfg(atomRef, key, v) {
+      atomRef.set(v)
+      try { ctx.storage.set(key, v) } catch { /* best effort */ }
     }
 
     function persistWatch(next) {
@@ -282,25 +320,72 @@ export default {
       try { ctx.storage.set('watch.registry', keep) } catch { /* best effort */ }
     }
 
-    function postWatchLines(lines, t) {
-      const text = lines.join('\n')
-      if (!text) return
-      let ok = false
-      try { ok = host.composer.submit(null, text) } catch { /* fall through */ }
-      if (ok) return
-      let drafted = false
-      try { drafted = host.composer.insertText(null, text, { mode: 'block' }) } catch { /* fall through */ }
-      try { host.notify({ kind: 'info', message: drafted ? t('watchDraftNote') : text }) } catch { /* nothing else */ }
+    // T-016: one notification log for BOTH areas ('hier generell alle
+    // meldungen sammeln') — every event line lands here regardless of
+    // notify/chat routing. Bounded to 100.
+    let notifLog = []
+    try { notifLog = ctx.storage.get('watch.log') || [] } catch { /* memory-only */ }
+    const $notifLog = atom(notifLog)
+    function logLines(lines, scope, t) {
+      notifLog = [...(notifLog || []).slice(-99), { ts: Date.now(), scope, lines: [...lines] }]
+      try { ctx.storage.set('watch.log', notifLog) } catch { /* best effort */ }
+      $notifLog.set(notifLog)
     }
 
     function sweepTasks(tasks, t) {
-      const { lines, nextMap } = watchSweep(watchRegistry, tasks || [], t)
+      const { lines, targets, nextMap } = watchSweep(watchRegistry, tasks || [], t)
       persistWatch(nextMap)
-      if (lines.length && $watchOn.get()) postWatchLines(lines, t)
+      if (!lines.length) return
+      logLines(lines, 'tasks', t)
+      const chatOn = $cfgTasksChatOn()
+      const notifyOn = $cfgTasksNotify.get()
+      if (!chatOn && !notifyOn) return
+      // group by origin target (null = no origin recorded) → one delivery
+      // per distinct target, all with the user's opt-in authority
+      const groups = {}
+      const keys = []
+      targets.forEach((tgt, i) => {
+        const key = tgt || '__none__'
+        if (!groups[key]) { groups[key] = { target: tgt, items: [] }; keys.push(key) }
+        groups[key].items.push(lines[i])
+      })
+      for (const key of keys) {
+        const g = groups[key]
+        deliverTaskGroup(g.target, g.items.join('\n'), t, notifyOn)
+      }
     }
 
-    // Fleet watch state: node statuses + relay reachability (T-014). Same
-    // toggle as the task watcher; first sight silent, transitions warn once.
+    function deliverTaskGroup(originId, text, t, notifyOn) {
+      let target = null
+      if ($cfgTasksTarget.get() === 'origin' && originId) target = originId
+      if (!target) {
+        const manual = ($cfgTasksSession.get() || '').trim()
+        if (manual) target = manual
+      }
+      if (!target) {
+        // no configured session at all → draft in the active composer
+        try { host.composer.insertText(null, text, { mode: 'block' }) } catch { /* nothing */ }
+        try { host.notify({ kind: 'info', message: `iowap watch — ${text}` }) } catch { /* nothing */ }
+        return
+      }
+      if ($cfgTasksMode.get() === 'direct') {
+        let ok = false
+        try { ok = host.composer.submit(target, text) } catch { /* fall through */ }
+        if (!ok) {
+          try { ok = host.composer.insertText(target, text, { mode: 'block' }) } catch { /* nothing */ }
+        }
+        if (ok) return
+      } else {
+        try { host.composer.insertText(target, text, { mode: 'block' }) } catch { /* nothing */ }
+        if (notifyOn) try { host.notify({ kind: 'info', message: `iowap watch — ${text}` }) } catch { /* nothing */ }
+        return
+      }
+      // direct submit failed (session not mounted) → notify fallback
+      try { host.notify({ kind: 'warning', message: `iowap watch — ${text}` }) } catch { /* nothing */ }
+    }
+
+    // Fleet watch state: node statuses + relay reachability (T-014). First
+    // sight silent, transitions warn once.
     let fleetRegistry = {}
     try { fleetRegistry = ctx.storage.get('watch.fleet') || {} } catch { /* memory-only */ }
 
@@ -312,7 +397,27 @@ export default {
     function sweepFleet(data, t) {
       const { lines, nextMap } = fleetSweep(fleetRegistry, data, t)
       persistFleet(nextMap)
-      if (lines.length && $watchOn.get()) postWatchLines(lines, t)
+      if (!lines.length) return
+      logLines(lines, 'fleet', t)
+      const notifyOn = $cfgFleetNotify.get()
+      const chatOn = $cfgFleetChatOn()
+      if (!notifyOn && !chatOn) return
+      if (!chatOn) {
+        for (const line of lines) {
+          try { host.notify({ kind: 'warning', message: `iowap fleet — ${line}` }) } catch { /* nothing */ }
+        }
+        return
+      }
+      const target = ($cfgFleetSession.get() || '').trim()
+      let ok = false
+      if (target) {
+        try { ok = host.composer.submit(target, lines.join('\n')) } catch { /* fall through */ }
+      }
+      if (!ok && notifyOn) {
+        for (const line of lines) {
+          try { host.notify({ kind: 'warning', message: `iowap fleet — ${line}` }) } catch { /* nothing */ }
+        }
+      }
     }
 
     // (T-013: the watcher hooks live in Chip — no separate headless component;
@@ -875,9 +980,11 @@ export default {
           qc.invalidateQueries({ queryKey: TASK_KEY })
           if (res?.ok) {
             host.notify({ kind: 'info', message: t('submittedOk', res.task_id) })
-            if ($watchOn.get()) {
+            if ($watchOn.get() || $cfgTasksNotify.get()) {
               const nm = String($name.get() || '').trim()
-              postWatchLines([t('watchSubmitted', nm || res.task_id, res.task_id)], t)
+              const line = t('watchSubmitted', nm || res.task_id, res.task_id)
+              logLines([line], 'tasks', t)
+              if ($watchOn.get()) deliverTaskGroup(null, line, t, $cfgTasksNotify.get())
             }
             $name.set(''); $formErr.set('')
           } else {
@@ -1081,12 +1188,29 @@ export default {
         // task watcher (T-013)
         watchToggleLabel: 'post task updates to chat',
         watchSubmitted: (n, tid) => `IOWAP watch: tracking "${n}" [${tid}] — updates will post here.`,
-        watchStage: (n, tid, i, s, p) => `IOWAP task "${n}" [${tid}]: stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
-        watchFinal: (n, tid, s, e) => `IOWAP task "${n}" [${tid}]: ${s}${e ? ` — ${e}` : ''}`,
+        watchStage: (n, tid, i, s) => `IOWAP task "${n}" [${tid}]: stage ${i} → ${s}`,
+        watchFinal: (n, tid, s) => `IOWAP task "${n}" [${tid}]: ${s}`,
         watchDraftNote: () => 'iowap watch — no open chat composer, update kept as draft',
         palWatch: 'IOWAP: toggle task watch posts',
         watchOnMsg: () => 'iowap task watcher: ON — stage results + finals post to chat',
         watchOffMsg: () => 'iowap task watcher: OFF — no chat posts',
+        // notifications page (T-016)
+        notifTitle: 'IOWAP Notifications',
+        notifHint: 'collects task and fleet messages; everything is OFF until you enable it here',
+        sectionTasks: 'Task messages',
+        sectionFleet: 'Fleet monitoring',
+        notifToast: 'notify (toast / notification center)',
+        notifChat: 'post to chat',
+        targetLabel: 'chat target',
+        targetOrigin: 'origin — the session that submitted the task',
+        targetManual: 'manual session',
+        modeLabel: 'post mode',
+        modeDraft: 'draft (review, then send)',
+        modeDirect: 'direct submit',
+        sessionPh: 'session id, e.g. 20261025_165600_6cb063',
+        logTitle: 'Message log',
+        logClear: 'Clear',
+        logEmpty: 'no messages collected yet',
         watchLongrun: (n, m) => `⏳ iowap task "${n}" running for at least ${m} min — still going`,
         fleetOffline: (n, st) => `⚠️ iowap fleet: node "${n}" went ${st || 'offline'}`,
         fleetBack: n => `✅ iowap fleet: node "${n}" is back online`,
@@ -1152,12 +1276,29 @@ export default {
         // (i18n resolver: app locale → en → raw key; Ronny 2026-10-25).
         watchToggleLabel: 'Task-Updates in den Chat posten',
         watchSubmitted: (n, tid) => `IOWAP watch: überwache "${n}" [${tid}] — Updates laufen hier ein.`,
-        watchStage: (n, tid, i, s, p) => `IOWAP-Task "${n}" [${tid}]: Stage ${i} → ${s}${p ? ` — ${p}` : ''}`,
-        watchFinal: (n, tid, s, e) => `IOWAP-Task "${n}" [${tid}]: ${s}${e ? ` — ${e}` : ''}`,
+        watchStage: (n, tid, i, s) => `IOWAP-Task "${n}" [${tid}]: Stage ${i} → ${s}`,
+        watchFinal: (n, tid, s) => `IOWAP-Task "${n}" [${tid}]: ${s}`,
         watchDraftNote: () => 'iowap watch — kein offener Chat-Composer, Update liegt als Draft',
         palWatch: 'IOWAP: Task-Watcher umschalten',
         watchOnMsg: () => 'IOWAP Task-Watcher: AN — Stage-Ergebnisse + Finals posten in den Chat',
         watchOffMsg: () => 'IOWAP Task-Watcher: AUS — keine Chat-Posts',
+        // Benachrichtigungsseite (T-016)
+        notifTitle: 'IOWAP-Benachrichtigungen',
+        notifHint: 'sammelt Task- und Flotten-Meldungen; alles ist AUS, bis du es hier einschaltest',
+        sectionTasks: 'Task-Meldungen',
+        sectionFleet: 'Flotten-Überwachung',
+        notifToast: 'Meldung (Toast / Benachrichtigungscenter)',
+        notifChat: 'in den Chat posten',
+        targetLabel: 'Chat-Ziel',
+        targetOrigin: 'Ursprung — die Session, die den Task gestellt hat',
+        targetManual: 'manuelle Session',
+        modeLabel: 'Post-Modus',
+        modeDraft: 'Draft (prüfen, dann senden)',
+        modeDirect: 'direkt senden',
+        sessionPh: 'Session-ID, z. B. 20261025_165600_6cb063',
+        logTitle: 'Meldungs-Log',
+        logClear: 'Leeren',
+        logEmpty: 'noch keine Meldungen gesammelt',
         watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft mindestens seit ${m} min — noch aktiv`,
         fleetOffline: (n, st) => `⚠️ IOWAP-Flotte: Node "${n}" jetzt ${st || 'offline'}`,
         fleetBack: n => `✅ IOWAP-Flotte: Node "${n}" wieder online`,
@@ -1222,12 +1363,29 @@ export default {
         // Task-Watcher (T-013) — las líneas del chat siguen el locale de la app
         watchToggleLabel: 'publicar actualizaciones de tareas en el chat',
         watchSubmitted: (n, tid) => `IOWAP watch: rastreando "${n}" [${tid}] — las actualizaciones aparecerán aquí.`,
-        watchStage: (n, tid, i, s, p) => `Tarea IOWAP "${n}" [${tid}]: fase ${i} → ${s}${p ? ` — ${p}` : ''}`,
-        watchFinal: (n, tid, s, e) => `Tarea IOWAP "${n}" [${tid}]: ${s}${e ? ` — ${e}` : ''}`,
+        watchStage: (n, tid, i, s) => `Tarea IOWAP "${n}" [${tid}]: fase ${i} → ${s}`,
+        watchFinal: (n, tid, s) => `Tarea IOWAP "${n}" [${tid}]: ${s}`,
         watchDraftNote: () => 'iowap watch — no hay composer de chat abierto, actualización guardada como borrador',
         palWatch: 'IOWAP: alternar avisos de tareas',
         watchOnMsg: () => 'IOWAP task watcher: ON — los resultados y finales de fases se publican en el chat',
         watchOffMsg: () => 'IOWAP task watcher: OFF — sin publicaciones en el chat',
+        // página de notificaciones (T-016)
+        notifTitle: 'Notificaciones IOWAP',
+        notifHint: 'recopila mensajes de tareas y de la flota; todo está apagado hasta que lo actives aquí',
+        sectionTasks: 'Mensajes de tareas',
+        sectionFleet: 'Vigilancia de la flota',
+        notifToast: 'avisar (toast / centro de notificaciones)',
+        notifChat: 'publicar en el chat',
+        targetLabel: 'destino del chat',
+        targetOrigin: 'origen — la sesión que envió la tarea',
+        targetManual: 'sesión manual',
+        modeLabel: 'modo de publicación',
+        modeDraft: 'borrador (revisar y luego enviar)',
+        modeDirect: 'envío directo',
+        sessionPh: 'id de sesión, p. ej. 20261025_165600_6cb063',
+        logTitle: 'Registro de mensajes',
+        logClear: 'Vaciar',
+        logEmpty: 'aún no hay mensajes recopilados',
         watchLongrun: (n, m) => `⏳ Tarea IOWAP "${n}" en ejecución desde hace al menos ${m} min — sigue activa`,
         fleetOffline: (n, st) => `⚠️ Flota IOWAP: el nodo "${n}" está ${st || 'offline'}`,
         fleetBack: n => `✅ Flota IOWAP: el nodo "${n}" vuelve a estar en línea`,
@@ -1292,12 +1450,29 @@ export default {
         // Observateur de tâches (T-013) — les lignes de chat suivent le locale de l'app
         watchToggleLabel: 'publier les mises à jour des tâches dans le chat',
         watchSubmitted: (n, tid) => `IOWAP watch : suivi de "${n}" [${tid}] — les mises à jour s'afficheront ici.`,
-        watchStage: (n, tid, i, s, p) => `Tâche IOWAP "${n}" [${tid}] : étape ${i} → ${s}${p ? ` — ${p}` : ''}`,
-        watchFinal: (n, tid, s, e) => `Tâche IOWAP "${n}" [${tid}] : ${s}${e ? ` — ${e}` : ''}`,
-        watchDraftNote: 'iowap watch — aucun composer de chat ouvert, mise à jour en brouillon',
+        watchStage: (n, tid, i, s) => `Tâche IOWAP "${n}" [${tid}] : étape ${i} → ${s}`,
+        watchFinal: (n, tid, s) => `Tâche IOWAP "${n}" [${tid}] : ${s}`,
+        watchDraftNote: () => 'iowap watch — aucun composer de chat ouvert, mise à jour en brouillon',
         palWatch: 'IOWAP : basculer les avis de tâches',
-        watchOnMsg: () => `Observateur de tâches IOWAP : ON — les résultats d'étapes et finaux sont publiés dans le chat`,
+        watchOnMsg: () => 'Observateur de tâches IOWAP : ON — les résultats d\'étapes et finaux sont publiés dans le chat',
         watchOffMsg: () => 'Observateur de tâches IOWAP : OFF — aucune publication dans le chat',
+        // page de notifications (T-016)
+        notifTitle: 'Notifications IOWAP',
+        notifHint: 'collecte les messages des tâches et de la flotte ; tout est désactivé jusqu\'à activation ici',
+        sectionTasks: 'Messages des tâches',
+        sectionFleet: 'Surveillance de la flotte',
+        notifToast: 'notifier (toast / centre de notifications)',
+        notifChat: 'publier dans le chat',
+        targetLabel: 'destination du chat',
+        targetOrigin: 'origine — la session qui a soumis la tâche',
+        targetManual: 'session manuelle',
+        modeLabel: 'mode de publication',
+        modeDraft: 'brouillon (vérifier, puis envoyer)',
+        modeDirect: 'envoi direct',
+        sessionPh: 'id de session, p. ex. 20261025_165600_6cb063',
+        logTitle: 'Journal des messages',
+        logClear: 'Vider',
+        logEmpty: 'aucun message collecté pour l\'instant',
         watchLongrun: (n, m) => `⏳ Tâche IOWAP "${n}" en cours depuis au moins ${m} min — toujours active`,
         fleetOffline: (n, st) => `⚠️ Flotte IOWAP : le nœud "${n}" est passé ${st || 'hors ligne'}`,
         fleetBack: n => `✅ Flotte IOWAP : le nœud "${n}" est de retour en ligne`,
@@ -1343,6 +1518,162 @@ export default {
       id: 'tasks-nav',
       area: SIDEBAR_NAV_AREA,
       data: { path: '/iowap-tasks', label: ctx.i18n.t('navLabel') + ' Tasks', codicon: 'checklist' }
+    })
+
+    // -----------------------------------------------------------------
+    // Notifications page (T-016, Ronny spec): all settings OFF by default,
+    // one section per area + the collected message log.
+    // -----------------------------------------------------------------
+    function NotificationsPage() {
+      const t = usePluginI18n(ID)
+      const log = useValue($notifLog)
+      const tasksChat = useValue($watchOn)
+      const tasksNotify = useValue($cfgTasksNotify)
+      const tasksTarget = useValue($cfgTasksTarget)
+      const tasksSession = useValue($cfgTasksSession)
+      const tasksMode = useValue($cfgTasksMode)
+      const fleetNotify = useValue($cfgFleetNotify)
+      const fleetChat = useValue($cfgFleetChat)
+      const fleetSession = useValue($cfgFleetSession)
+
+      const radio = (name, checked, onPick, children) => jsx('label', {
+        className: 'flex cursor-pointer items-center gap-1.5 text-sm',
+        children: [
+          jsx('input', {
+            type: 'radio', name, checked, onChange: onPick,
+            className: 'accent-(--primary)'
+          }),
+          children
+        ]
+      })
+      const entry = (e, i) => {
+        const when = e?.ts ? relativeTime(e.ts) : '?'
+        return jsx('div', { key: i, className: 'border-t first:border-t-0 px-3 py-1.5 text-xs', children: [
+          jsx('div', { className: 'text-muted-foreground', children: `${e.scope === 'fleet' ? 'fleet' : 'tasks'} · ${when}` }),
+          ...((e.lines || [])).map((line, j) => jsx('div', { key: j, className: 'font-mono', children: line }))
+        ] })
+      }
+
+      return jsx('div', {
+        className: 'mx-auto w-full max-w-3xl space-y-6 p-6',
+        children: [
+          jsx('h1', { className: 'text-lg font-semibold', children: t('notifTitle') }),
+          jsx('p', { className: 'text-sm text-muted-foreground', children: t('notifHint') }),
+
+          jsxs('section', {
+            className: 'space-y-4 rounded-lg border p-4',
+            children: [
+              jsx('h2', { className: 'text-sm font-semibold', children: t('sectionTasks') }),
+              jsx('label', {
+                className: 'flex items-center gap-2 text-sm',
+                children: [
+                  jsx(Switch, {
+                    id: 'iowap-tasks-notify', size: 'xs', checked: tasksNotify,
+                    onCheckedChange: v => { haptic('tap'); setCfg($cfgTasksNotify, 'notify.tasks.enabled', v) }
+                  }),
+                  t('notifToast')
+                ]
+              }),
+              jsx('label', {
+                className: 'flex items-center gap-2 text-sm',
+                children: [
+                  jsx(Switch, {
+                    id: 'iowap-tasks-chat', size: 'xs', checked: tasksChat,
+                    onCheckedChange: v => { haptic('tap'); setWatchOn(v) }
+                  }),
+                  t('notifChat')
+                ]
+              }),
+              tasksChat ? jsx('div', { className: 'space-y-3 rounded-md border bg-muted/30 p-3', children: [
+                jsx('div', { className: 'text-xs font-medium', children: t('targetLabel') }),
+                jsxs('div', { className: 'flex flex-col gap-1.5', children: [
+                  radio('iowap-tasks-target', tasksTarget === 'origin',
+                    () => { haptic('tap'); setCfg($cfgTasksTarget, 'notify.tasks.target', 'origin') },
+                    t('targetOrigin')),
+                  radio('iowap-tasks-target', tasksTarget === 'manual',
+                    () => { haptic('tap'); setCfg($cfgTasksTarget, 'notify.tasks.target', 'manual') },
+                    t('targetManual'))
+                ] }),
+                jsx(Input, {
+                  value: tasksSession, placeholder: t('sessionPh'),
+                  onChange: evt => setCfg($cfgTasksSession, 'notify.tasks.session', evt.target.value || '')
+                }),
+                jsx('div', { className: 'text-xs font-medium', children: t('modeLabel') }),
+                jsxs('div', { className: 'flex flex-col gap-1.5', children: [
+                  radio('iowap-tasks-mode', tasksMode === 'draft',
+                    () => { haptic('tap'); setCfg($cfgTasksMode, 'notify.tasks.mode', 'draft') },
+                    t('modeDraft')),
+                  radio('iowap-tasks-mode', tasksMode === 'direct',
+                    () => { haptic('tap'); setCfg($cfgTasksMode, 'notify.tasks.mode', 'direct') },
+                    t('modeDirect'))
+                ] })
+              ] }) : null
+            ]
+          }),
+
+          jsxs('section', {
+            className: 'space-y-4 rounded-lg border p-4',
+            children: [
+              jsx('h2', { className: 'text-sm font-semibold', children: t('sectionFleet') }),
+              jsx('label', {
+                className: 'flex items-center gap-2 text-sm',
+                children: [
+                  jsx(Switch, {
+                    id: 'iowap-fleet-notify', size: 'xs', checked: fleetNotify,
+                    onCheckedChange: v => { haptic('tap'); setCfg($cfgFleetNotify, 'notify.fleet.enabled', v) }
+                  }),
+                  t('notifToast')
+                ]
+              }),
+              jsx('label', {
+                className: 'flex items-center gap-2 text-sm',
+                children: [
+                  jsx(Switch, {
+                    id: 'iowap-fleet-chat', size: 'xs', checked: fleetChat,
+                    onCheckedChange: v => { haptic('tap'); setCfg($cfgFleetChat, 'notify.fleet.chat', v) }
+                  }),
+                  t('notifChat')
+                ]
+              }),
+              fleetChat ? jsx(Input, {
+                value: fleetSession, placeholder: t('sessionPh'),
+                onChange: evt => setCfg($cfgFleetSession, 'notify.fleet.session', evt.target.value || '')
+              }) : null
+            ]
+          }),
+
+          jsxs('section', {
+            className: 'space-y-2 rounded-lg border p-4',
+            children: [
+              jsx('div', { className: 'flex items-center justify-between', children: [
+                jsx('h2', { className: 'text-sm font-semibold', children: t('logTitle') }),
+                jsx(Button, {
+                  size: 'xs', onClick: () => {
+                    haptic('tap')
+                    notifLog = []
+                    try { ctx.storage.set('watch.log', []) } catch { /* best effort */ }
+                    $notifLog.set([])
+                  }
+                }, t('logClear'))
+              ] }),
+              (log || []).length === 0
+                ? jsx('div', { className: 'text-xs text-muted-foreground', children: t('logEmpty') })
+                : jsxs('div', { className: 'max-h-80 space-y-2 overflow-y-auto', children: [...(log || []).slice(-50).reverse().map(entry)] })
+            ]
+          })
+        ]
+      })
+    }
+    ctx.register({
+      id: 'notif-page',
+      area: ROUTES_AREA,
+      data: { path: '/iowap-notifications' },
+      render: () => jsx(NotificationsPage, {})
+    })
+    ctx.register({
+      id: 'notif-nav',
+      area: SIDEBAR_NAV_AREA,
+      data: { path: '/iowap-notifications', label: ctx.i18n.t('notifTitle'), codicon: 'bell' }
     })
 
     // Statusbar chip (right side).
