@@ -1120,7 +1120,8 @@ export default {
       en: {
         paneTitle: 'IOWAP Fleet',
         pageTitle: 'IOWAP Fleet',
-        navLabel: 'IOWAP',
+        navFleet: 'IOWAP Fleet',
+        navTasks: 'IOWAP Tasks',
         chipTip: 'IOWAP fleet — open overview',
         loading: 'loading fleet…',
         online: 'nodes online',
@@ -1204,7 +1205,8 @@ export default {
       de: {
         paneTitle: 'IOWAP Fleet',
         pageTitle: 'IOWAP Fleet',
-        navLabel: 'IOWAP',
+        navFleet: 'IOWAP Fleet (Flotte)',
+        navTasks: 'IOWAP Tasks',
         chipTip: 'IOWAP fleet — open overview',
         loading: 'loading fleet…',
         online: 'nodes online',
@@ -1289,7 +1291,8 @@ export default {
       es: {
         paneTitle: 'Flota IOWAP',
         pageTitle: 'Flota IOWAP',
-        navLabel: 'IOWAP',
+        navFleet: 'Flota IOWAP',
+        navTasks: 'Tareas IOWAP',
         chipTip: 'Flota IOWAP — abrir resumen',
         loading: 'cargando flota…',
         online: 'nodos en línea',
@@ -1373,7 +1376,8 @@ export default {
       fr: {
         paneTitle: 'Flotte IOWAP',
         pageTitle: 'Flotte IOWAP',
-        navLabel: 'IOWAP',
+        navFleet: 'Flotte IOWAP',
+        navTasks: 'Tâches IOWAP',
         chipTip: `Flotte IOWAP — ouvrir la vue d'ensemble`,
         loading: 'chargement de la flotte…',
         online: 'nœuds en ligne',
@@ -1479,7 +1483,7 @@ export default {
     ctx.register({
       id: 'fleet-nav',
       area: SIDEBAR_NAV_AREA,
-      data: { path: '/iowap-fleet', label: ctx.i18n.t('navLabel'), codicon: 'project' }
+      data: { path: '/iowap-fleet', label: ctx.i18n.t('navFleet'), codicon: 'project' }
     })
 
     // Tasks page (submit / track / live status) + nav row.
@@ -1492,7 +1496,7 @@ export default {
     ctx.register({
       id: 'tasks-nav',
       area: SIDEBAR_NAV_AREA,
-      data: { path: '/iowap-tasks', label: ctx.i18n.t('navLabel') + ' Tasks', codicon: 'checklist' }
+      data: { path: '/iowap-tasks', label: ctx.i18n.t('navTasks'), codicon: 'checklist' }
     })
 
     // -----------------------------------------------------------------
