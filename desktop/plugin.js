@@ -154,6 +154,7 @@ function watchSweep(prevMap, tasks, t, now = Date.now()) {
   const lines = []
   const targets = []
   const nextMap = {}
+  let flash = null // last final transition: 'taskDone' | 'taskFailed' — feeds the chip flash (T-17)
   for (const x of tasks || []) {
     if (!x?.task_id) continue
     const prev = prevMap[x.task_id]
@@ -179,18 +180,21 @@ function watchSweep(prevMap, tasks, t, now = Date.now()) {
       // no error text here — event only
       lines.push(t('watchFinal', name, x.task_id, snap.status))
       targets.push(x.session_id || null)
+      flash = snap.status === 'completed' ? 'taskDone' : 'taskFailed'
     }
   }
-  return { lines, targets, nextMap }
+  return { lines, targets, nextMap, flash }
 }
 
-// Pure fleet watch: (prevMap, data, t) → { lines, nextMap }. Node status
+// Pure fleet watch: (prevMap, data, t) → { lines, nextMap, flash }. Node status
 // transitions (online → non-online = warning, back = recovery) and relay
 // reachability (down → warning once, up → recovery once). First sight is
-// silent; unchanged nodes never post.
+// silent; unchanged nodes never post. flash = the LAST transition, as
+// { kind: 'nodeDown'|'nodeUp'|'relayDown'|'relayUp', name? } for the chip (T-17).
 function fleetSweep(prevMap, data, t) {
   const lines = []
   const nextMap = {}
+  let flash = null
   for (const n of workerNodes(data)) {
     const id = n.node_id || n.node_name
     if (!id) continue
@@ -200,8 +204,10 @@ function fleetSweep(prevMap, data, t) {
     if (!prev) continue // first sight: silent
     if (prev.status === 'online' && nowStatus !== 'online') {
       lines.push(t('fleetOffline', pickName(n), nowStatus || 'offline'))
+      flash = { kind: 'nodeDown', name: pickName(n) }
     } else if (prev.status !== 'online' && nowStatus === 'online') {
       lines.push(t('fleetBack', pickName(n)))
+      flash = { kind: 'nodeUp', name: pickName(n) }
     }
   }
   // Relay reachability as row "__relay__" — health-error shape means down.
@@ -210,8 +216,9 @@ function fleetSweep(prevMap, data, t) {
   nextMap.__relay__ = { status: down ? 'down' : 'up' }
   if (prevRelay?.status && prevRelay.status !== (down ? 'down' : 'up')) {
     lines.push(down ? t('fleetRelayDown') : t('fleetRelayBack'))
+    flash = { kind: down ? 'relayDown' : 'relayUp' }
   }
-  return { lines, nextMap }
+  return { lines, nextMap, flash }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +303,9 @@ export default {
     const $cfgFleetNotify = atom(cfg('notify.fleet.enabled', false))
     const $cfgFleetChat = atom(cfg('notify.fleet.chat', false))
     const $cfgFleetSession = atom(cfg('notify.fleet.session', ''))
+    // T-17 chip flash: pure display switch (no composer, no consent topic).
+    // Shows the last task/fleet event in the chip for ~10 s, then back to N/M.
+    const $cfgChipFlash = atom(cfg('chip.flash.enabled', true))
     const cfgTasksChatOn = () => $watchOn.get()
     const cfgFleetChatOn = () => $cfgFleetChat.get()
     function setCfg(atomRef, key, v) {
@@ -332,8 +342,34 @@ export default {
       $notifLog.set(notifLog)
     }
 
+    // T-17 chip flash state — { key, args, tone, until }; chip decides display.
+    const $chipFlash = atom(null)
+    let flashTimer = null
+    function chipFlashShow(flash, t) {
+      if (!$cfgChipFlash.get() || !flash) return
+      const key = flash.kind === 'taskDone' ? 'chipTaskDone'
+        : flash.kind === 'taskFailed' ? 'chipTaskFailed'
+          : flash.kind === 'nodeDown' ? 'chipNodeDown'
+            : flash.kind === 'nodeUp' ? 'chipNodeUp'
+              : flash.kind === 'relayDown' ? 'chipRelayDown' : 'chipRelayUp'
+      const tone = flash.kind === 'taskDone' || flash.kind === 'nodeUp' || flash.kind === 'relayUp' ? 'good'
+        : flash.kind === 'nodeDown' || flash.kind === 'relayDown' ? 'bad' : 'warn'
+      const args = flash.name ? [flash.name] : []
+      $chipFlash.set({ key, args, tone, until: Date.now() + 5_000 })
+      if (flashTimer) clearTimeout(flashTimer)
+      flashTimer = setTimeout(() => $chipFlash.set(null), 5_000)
+    }
+
+    // T-17 pane task tiles: click a tile → copy the watch line to clipboard.
+    function copyTaskLines(lines, t) {
+      const text = (lines || []).join('\n')
+      if (text && navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(() => {})
+      haptic('tap')
+      try { host.notify({ kind: 'success', message: t('copiedMsg') }) } catch { /* nothing */ }
+    }
+
     function sweepTasks(tasks, t) {
-      const { lines, targets, nextMap } = watchSweep(watchRegistry, tasks || [], t)
+      const { lines, targets, nextMap, flash } = watchSweep(watchRegistry, tasks || [], t)
       persistWatch(nextMap)
       if (!lines.length) return
       logLines(lines, 'tasks', t)
@@ -353,6 +389,7 @@ export default {
         const g = groups[key]
         deliverTaskGroup(g.target, g.items.join('\n'), t, notifyOn)
       }
+      chipFlashShow(flash, t)
     }
 
     function deliverTaskGroup(originId, text, t, notifyOn) {
@@ -395,8 +432,9 @@ export default {
     }
 
     function sweepFleet(data, t) {
-      const { lines, nextMap } = fleetSweep(fleetRegistry, data, t)
+      const { lines, nextMap, flash } = fleetSweep(fleetRegistry, data, t)
       persistFleet(nextMap)
+      if (lines.length) chipFlashShow(flash, t)
       if (!lines.length) return
       logLines(lines, 'fleet', t)
       const notifyOn = $cfgFleetNotify.get()
@@ -429,6 +467,8 @@ export default {
     function Chip() {
       const t = usePluginI18n(ID)
       const summary = useValue(lastSummary)
+      const flash = useValue($chipFlash)
+      const flashActive = !!(flash && Date.now() < flash.until)
       // T-013 task watcher rides INSIDE this always-mounted component: the
       // hooks live in the component body — Tip (Radix slot) accepts exactly
       // ONE child, so the watcher can't be an extra JSX child (that shipped
@@ -454,14 +494,19 @@ export default {
             haptic('tap')
             host.navigate('/iowap-fleet')
           },
-          children: jsxs('span', {
-            className: 'inline-flex items-center gap-1',
-            children: [
-              jsx(StatusDot, { tone: summary.tone }),
-              jsx('span', { children: ID }),
-              jsx('span', { className: 'tabular-nums', children: `${summary.online}/${summary.total}` })
-            ]
-          })
+          children: flashActive
+            ? jsx('span', { className: 'inline-flex items-center gap-1', children: [
+                jsx(StatusDot, { tone: flash.tone }),
+                jsx('span', { children: t(flash.key, ...flash.args) })
+              ] })
+            : jsxs('span', {
+                className: 'inline-flex items-center gap-1',
+                children: [
+                  jsx(StatusDot, { tone: summary.tone }),
+                  jsx('span', { children: ID }),
+                  jsx('span', { className: 'tabular-nums', children: `${summary.online}/${summary.total}` })
+                ]
+              })
         })
       })
     }
@@ -541,6 +586,9 @@ export default {
       const { data, isError, error, isFetching } = useFleet()
       const info = summaryOf(data)
       const hl = healthLineOf(data?.health)
+      // T-17: last task lines (no fleet rows here — the node list already
+      // shows node state) as copy-to-clipboard tiles
+      const taskLog = (useValue($notifLog) || []).filter(e => e?.scope === 'tasks').slice(-6)
 
       return jsxs('div', {
         className: 'flex h-full flex-col gap-2 p-3 text-sm',
@@ -567,6 +615,22 @@ export default {
                 ? jsx('div', { className: 'text-(--ui-text-quaternary)', children: t('loading') })
                 : null,
               data && workerNodes(data).map(n => jsx(NodeRow, { key: n.node_id || pickName(n), n }))
+            ]
+          }),
+          // T-17: task tiles — click copies the watch line (paste into any chat)
+          jsxs('div', {
+            className: 'shrink-0 space-y-1',
+            children: [
+              jsx('div', { className: 'text-xs font-medium text-(--ui-text-tertiary)', children: t('paneLogTitle') }),
+              taskLog.length
+                ? taskLog.map((e, i) => jsx('button', {
+                    key: `${e?.ts || i}-${i}`,
+                    type: 'button',
+                    title: t('copyHint'),
+                    className: 'w-full truncate rounded-md border px-2 py-1 text-left font-mono text-xs hover:bg-(--chrome-action-hover)',
+                    onClick: () => copyTaskLines(e.lines, t)
+                  }, e.lines.join('\n')))
+                : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: t('paneLogEmpty') })
             ]
           }),
           isError
@@ -1195,6 +1259,17 @@ export default {
         logTitle: 'Message log',
         logClear: 'Clear',
         logEmpty: 'no messages collected yet',
+        chipFlashLabel: 'show latest event in the status chip (5 s)',
+        chipTaskDone: (n) => 'task completed',
+        chipTaskFailed: (n) => 'task failed',
+        chipNodeDown: (n) => `${n} offline`,
+        chipNodeUp: (n) => `${n} online`,
+        chipRelayDown: () => 'relay down',
+        chipRelayUp: () => 'relay back',
+        paneLogTitle: 'Task messages (click = copy)',
+        paneLogEmpty: 'no task messages yet — they appear here once a task finishes',
+        copyHint: 'copy to clipboard',
+        copiedMsg: 'copied to clipboard',
         palNotif: 'IOWAP: open notifications',
         watchLongrun: (n, m) => `⏳ iowap task "${n}" running for at least ${m} min — still going`,
         fleetOffline: (n, st) => `⚠️ iowap fleet: node "${n}" went ${st || 'offline'}`,
@@ -1281,6 +1356,17 @@ export default {
         logTitle: 'Meldungs-Log',
         logClear: 'Leeren',
         logEmpty: 'noch keine Meldungen gesammelt',
+        chipFlashLabel: 'neuestes Ereignis im Status-Chip zeigen (5 s)',
+        chipTaskDone: (n) => 'Task erledigt',
+        chipTaskFailed: (n) => 'Task fehlgeschlagen',
+        chipNodeDown: (n) => `${n} offline`,
+        chipNodeUp: (n) => `${n} online`,
+        chipRelayDown: () => 'Relay nicht erreichbar',
+        chipRelayUp: () => 'Relay wieder da',
+        paneLogTitle: 'Task-Meldungen (Klick = kopieren)',
+        paneLogEmpty: 'noch keine Task-Meldungen — sie erscheinen, sobald eine Task endet',
+        copyHint: 'in die Zwischenablage kopieren',
+        copiedMsg: 'kopiert',
         palNotif: 'IOWAP: Benachrichtigungen öffnen',
         watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft mindestens seit ${m} min — noch aktiv`,
         fleetOffline: (n, st) => `⚠️ IOWAP-Flotte: Node "${n}" jetzt ${st || 'offline'}`,
@@ -1366,6 +1452,17 @@ export default {
         logTitle: 'Registro de mensajes',
         logClear: 'Vaciar',
         logEmpty: 'aún no hay mensajes recopilados',
+        chipFlashLabel: 'mostrar el último evento en el chip de estado (5 s)',
+        chipTaskDone: (n) => 'tarea completada',
+        chipTaskFailed: (n) => 'tarea fallida',
+        chipNodeDown: (n) => `${n} sin conexión`,
+        chipNodeUp: (n) => `${n} en línea`,
+        chipRelayDown: () => 'relay sin conexión',
+        chipRelayUp: () => 'relay de vuelta',
+        paneLogTitle: 'Mensajes de tareas (clic = copiar)',
+        paneLogEmpty: 'aún no hay mensajes de tareas — aparecerán cuando termine una tarea',
+        copyHint: 'copiar al portapapeles',
+        copiedMsg: 'copiado',
         palNotif: 'IOWAP: abrir notificaciones',
         watchLongrun: (n, m) => `⏳ Tarea IOWAP "${n}" en ejecución desde hace al menos ${m} min — sigue activa`,
         fleetOffline: (n, st) => `⚠️ Flota IOWAP: el nodo "${n}" está ${st || 'offline'}`,
@@ -1451,6 +1548,17 @@ export default {
         logTitle: 'Journal des messages',
         logClear: 'Vider',
         logEmpty: 'aucun message collecté pour l\'instant',
+        chipFlashLabel: 'afficher le dernier événement dans la puce d\'état (5 s)',
+        chipTaskDone: (n) => 'tâche terminée',
+        chipTaskFailed: (n) => 'tâche en échec',
+        chipNodeDown: (n) => `${n} hors ligne`,
+        chipNodeUp: (n) => `${n} en ligne`,
+        chipRelayDown: () => 'relay injoignable',
+        chipRelayUp: () => 'relay de retour',
+        paneLogTitle: 'Messages des tâches (clic = copier)',
+        paneLogEmpty: 'aucun message de tâche — ils apparaissent dès qu\'une tâche se termine',
+        copyHint: 'copier dans le presse-papiers',
+        copiedMsg: 'copié',
         palNotif: 'IOWAP : ouvrir les notifications',
         watchLongrun: (n, m) => `⏳ Tâche IOWAP "${n}" en cours depuis au moins ${m} min — toujours active`,
         fleetOffline: (n, st) => `⚠️ Flotte IOWAP : le nœud "${n}" est passé ${st || 'hors ligne'}`,
@@ -1508,6 +1616,7 @@ export default {
       const log = useValue($notifLog)
       const tasksChat = useValue($watchOn)
       const tasksNotify = useValue($cfgTasksNotify)
+      const chipFlash = useValue($cfgChipFlash)
       const tasksTarget = useValue($cfgTasksTarget)
       const tasksSession = useValue($cfgTasksSession)
       const tasksMode = useValue($cfgTasksMode)
@@ -1561,6 +1670,16 @@ export default {
                     onCheckedChange: v => { haptic('tap'); setWatchOn(v) }
                   }),
                   t('notifChat')
+                ]
+              }),
+              jsxs('label', {
+                className: 'flex items-center gap-2 text-sm',
+                children: [
+                  jsx(Switch, {
+                    id: 'iowap-chip-flash', size: 'xs', checked: chipFlash,
+                    onCheckedChange: v => { haptic('tap'); setCfg($cfgChipFlash, 'chip.flash.enabled', v) }
+                  }),
+                  t('chipFlashLabel')
                 ]
               }),
               tasksChat ? jsx('div', { className: 'space-y-3 rounded-md border bg-muted/30 p-3', children: [
