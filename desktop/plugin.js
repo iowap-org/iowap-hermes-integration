@@ -304,8 +304,11 @@ export default {
     const $cfgFleetChat = atom(cfg('notify.fleet.chat', false))
     const $cfgFleetSession = atom(cfg('notify.fleet.session', ''))
     // T-17 chip flash: pure display switch (no composer, no consent topic).
-    // Shows the last task/fleet event in the chip for ~10 s, then back to N/M.
-    const $cfgChipFlash = atom(cfg('chip.flash.enabled', true))
+    // Ronny principle: EVERYTHING defaults OFF. Shows the last task/fleet
+    // event in the chip for ~5 s, then back to N/M.
+    const $cfgChipFlash = atom(cfg('chip.flash.enabled', false))
+    // T-17 pane tiles: task lines as copy-to-clipboard tiles — also default OFF.
+    const $cfgPaneLog = atom(cfg('pane.log.enabled', false))
     const cfgTasksChatOn = () => $watchOn.get()
     const cfgFleetChatOn = () => $cfgFleetChat.get()
     function setCfg(atomRef, key, v) {
@@ -587,8 +590,9 @@ export default {
       const info = summaryOf(data)
       const hl = healthLineOf(data?.health)
       // T-17: last task lines (no fleet rows here — the node list already
-      // shows node state) as copy-to-clipboard tiles
-      const taskLog = (useValue($notifLog) || []).filter(e => e?.scope === 'tasks').slice(-6)
+      // shows node state) as copy-to-clipboard tiles — default OFF
+      const paneLogOn = useValue($cfgPaneLog)
+      const taskLog = paneLogOn ? (useValue($notifLog) || []).filter(e => e?.scope === 'tasks').slice(-5) : []
 
       return jsxs('div', {
         className: 'flex h-full flex-col gap-2 p-3 text-sm',
@@ -617,8 +621,9 @@ export default {
               data && workerNodes(data).map(n => jsx(NodeRow, { key: n.node_id || pickName(n), n }))
             ]
           }),
-          // T-17: task tiles — click copies the watch line (paste into any chat)
-          jsxs('div', {
+          // T-17: task tiles — click copies the watch line (paste into any chat);
+          // off by default (Ronny principle), toggled on the notifications page
+          paneLogOn ? jsxs('div', {
             className: 'shrink-0 space-y-1',
             children: [
               jsx('div', { className: 'text-xs font-medium text-(--ui-text-tertiary)', children: t('paneLogTitle') }),
@@ -632,7 +637,7 @@ export default {
                   }, e.lines.join('\n')))
                 : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: t('paneLogEmpty') })
             ]
-          }),
+          }) : null,
           isError
             ? jsx('div', {
                 className: 'text-xs text-destructive break-words',
@@ -1260,6 +1265,7 @@ export default {
         logClear: 'Clear',
         logEmpty: 'no messages collected yet',
         chipFlashLabel: 'show latest event in the status chip (5 s)',
+        paneLogLabel: 'show last 5 task tiles in the fleet pane (click = copy)',
         chipTaskDone: (n) => 'task completed',
         chipTaskFailed: (n) => 'task failed',
         chipNodeDown: (n) => `${n} offline`,
@@ -1357,6 +1363,7 @@ export default {
         logClear: 'Leeren',
         logEmpty: 'noch keine Meldungen gesammelt',
         chipFlashLabel: 'neuestes Ereignis im Status-Chip zeigen (5 s)',
+        paneLogLabel: 'letzte 5 Task-Kacheln in der Fleet-Pane zeigen (Klick = kopieren)',
         chipTaskDone: (n) => 'Task erledigt',
         chipTaskFailed: (n) => 'Task fehlgeschlagen',
         chipNodeDown: (n) => `${n} offline`,
@@ -1453,6 +1460,7 @@ export default {
         logClear: 'Vaciar',
         logEmpty: 'aún no hay mensajes recopilados',
         chipFlashLabel: 'mostrar el último evento en el chip de estado (5 s)',
+        paneLogLabel: 'mostrar las últimas 5 fichas de tareas en el panel (clic = copiar)',
         chipTaskDone: (n) => 'tarea completada',
         chipTaskFailed: (n) => 'tarea fallida',
         chipNodeDown: (n) => `${n} sin conexión`,
@@ -1549,6 +1557,7 @@ export default {
         logClear: 'Vider',
         logEmpty: 'aucun message collecté pour l\'instant',
         chipFlashLabel: 'afficher le dernier événement dans la puce d\'état (5 s)',
+        paneLogLabel: 'afficher les 5 dernières tuiles de tâches dans le panneau (clic = copier)',
         chipTaskDone: (n) => 'tâche terminée',
         chipTaskFailed: (n) => 'tâche en échec',
         chipNodeDown: (n) => `${n} hors ligne`,
@@ -1617,6 +1626,7 @@ export default {
       const tasksChat = useValue($watchOn)
       const tasksNotify = useValue($cfgTasksNotify)
       const chipFlash = useValue($cfgChipFlash)
+      const paneLog = useValue($cfgPaneLog)
       const tasksTarget = useValue($cfgTasksTarget)
       const tasksSession = useValue($cfgTasksSession)
       const tasksMode = useValue($cfgTasksMode)
@@ -1680,6 +1690,16 @@ export default {
                     onCheckedChange: v => { haptic('tap'); setCfg($cfgChipFlash, 'chip.flash.enabled', v) }
                   }),
                   t('chipFlashLabel')
+                ]
+              }),
+              jsxs('label', {
+                className: 'flex items-center gap-2 text-sm',
+                children: [
+                  jsx(Switch, {
+                    id: 'iowap-pane-log', size: 'xs', checked: paneLog,
+                    onCheckedChange: v => { haptic('tap'); setCfg($cfgPaneLog, 'pane.log.enabled', v) }
+                  }),
+                  t('paneLogLabel')
                 ]
               }),
               tasksChat ? jsx('div', { className: 'space-y-3 rounded-md border bg-muted/30 p-3', children: [
