@@ -170,6 +170,9 @@ def cmd_submit(a: argparse.Namespace) -> None:
             "owner": a.owner[:32] if a.owner else None,
             "delegated": bool(a.owner),
             "submitted_at": time.time(),
+            # T-016: session origin — the watcher posts results back into
+            # exactly this session (composer per-id addressing)
+            "session_id": (a.session or "").strip()[:64] if a.session else None,
         })
     print(json.dumps(data, ensure_ascii=False))
 
@@ -190,6 +193,7 @@ def cmd_track(a: argparse.Namespace) -> None:
         "owner": a.owner,
         "delegated": delegated,
         "submitted_at": time.time(),
+        "session_id": (a.session or "").strip()[:64] if a.session else None,
     })
     print(json.dumps({"ok": True, "task_id": a.task_id, "delegated": delegated}))
 
@@ -207,6 +211,7 @@ def main() -> None:
     s.add_argument("--name")
     s.add_argument("--priority", type=int)
     s.add_argument("--owner", help="target node id — task becomes delegated (unreadable result)")
+    s.add_argument("--session", help="submitting agent session id — the watcher posts results back into this session")
     s.set_defaults(func=cmd_submit)
 
     t = sub.add_parser("track", help="track an existing task id")
@@ -216,6 +221,7 @@ def main() -> None:
     t.add_argument("--owner", help="records the task as delegated")
     t.add_argument("--delegated", action="store_true",
                    help="owner-scoped task: skip the fetchability sanity check")
+    t.add_argument("--session", help="submitting agent session id — the watcher posts results back into this session")
     t.set_defaults(func=cmd_track)
 
     l = sub.add_parser("list", help="print the shared track store")

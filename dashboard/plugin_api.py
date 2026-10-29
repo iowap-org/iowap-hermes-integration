@@ -864,7 +864,12 @@ async def tasks() -> dict:
             }
         try:
             data = await _fetch_task(tid)
-            return _summarize_task(data)
+            summary = _summarize_task(data)
+            # T-016: session origin rides with the row — the watcher posts
+            # results back into exactly this session
+            if m.get("session_id"):
+                summary["session_id"] = m["session_id"]
+            return summary
         except Exception as exc:
             errors.append(f"{tid}: {type(exc).__name__}: {str(exc)[:150]}")
             return {"task_id": tid, "status": "fetch_error", "error": str(exc)[:200]}

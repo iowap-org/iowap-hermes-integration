@@ -148,10 +148,29 @@ def test_bridge_merge_matches_backend_schema(track_file):
     bridge.TRACK_FILE = track_file  # redirect to the test file
 
     assert bridge.store_merge("bt1", {"capability": "code.ai", "delegated": False}) is True
-    # same file, backend reads it
+    # T-016: the bridge carries the submitting session id in the meta —
+    # the backend must read it back unchanged (watcher composer target)
+    assert bridge.store_merge("bt3", {"capability": "code.ai", "session_id": "sess_9"}) is True
     store = plugin_api._track_store_read()
-    assert store["ids"] == ["bt1"]
+    assert store["meta"]["bt3"]["session_id"] == "sess_9"
+    # same file, backend reads it
+    assert store["ids"] == ["bt3", "bt1"]
     assert store["meta"]["bt1"]["capability"] == "code.ai"
     # and backend merge appends to a bridge-written file
     plugin_api._track_store_merge("bt2")
-    assert plugin_api._tracked_list() == ["bt2", "bt1"]
+    assert plugin_api._tracked_list() == ["bt2", "bt3", "bt1"]
+
+
+@pytest.mark.asyncio
+async def test_tasks_endpoint_passes_session_origin(track_file, monkeypatch):
+    # T-016: /tasks rows carry the session origin — the watcher addresses
+    # its composer posts at exactly this session
+    plugin_api._track_store_merge("tX", {"capability": "code.ai", "session_id": "sess_ABC"})
+
+    async def fake_fetch(tid):
+        return {"task": {"task_id": tid, "task_name": "n", "status": "running", "stages": []}}
+
+    monkeypatch.setattr(plugin_api, "_fetch_task", fake_fetch)
+    out = await plugin_api.tasks()
+    row = next(t for t in out["tasks"] if t["task_id"] == "tX")
+    assert row["session_id"] == "sess_ABC"
