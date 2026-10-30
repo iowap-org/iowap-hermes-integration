@@ -636,13 +636,19 @@ export default {
             children: [
               jsx('div', { className: 'text-xs font-medium text-(--ui-text-tertiary)', children: t('paneLogTitle') }),
               taskLog.length
-                ? taskLog.map((e, i) => jsx('button', {
+                ? taskLog.map((e, i) => jsxs('button', {
                     key: `${e?.ts || i}-${i}`,
                     type: 'button',
                     title: t('copyHint'),
-                    className: 'w-full truncate rounded-md border px-2 py-1 text-left font-mono text-xs hover:bg-(--chrome-action-hover)',
-                    onClick: () => copyTaskLines(e.lines, t)
-                  }, e.lines.join('\n')))
+                    className: 'w-full rounded-md border px-2 py-1.5 text-left hover:bg-(--chrome-action-hover)',
+                    onClick: () => copyTaskLines(e.lines, t),
+                    children: ((e.lines || []).map((ln, j) => jsx('div', {
+                      key: j,
+                      // full wrap instead of truncate — narrow pane cut the line into unreadability
+                      className: 'font-mono text-[11px] leading-snug break-all',
+                      children: ln
+                    })))
+                  }))
                 : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: t('paneLogEmpty') })
             ]
           }) : null,
