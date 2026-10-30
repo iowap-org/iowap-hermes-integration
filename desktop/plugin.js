@@ -590,9 +590,11 @@ export default {
       const info = summaryOf(data)
       const hl = healthLineOf(data?.health)
       // T-17: last task lines (no fleet rows here — the node list already
-      // shows node state) as copy-to-clipboard tiles — default OFF
-      const paneLogOn = useValue($cfgPaneLog)
-      const taskLog = paneLogOn ? (useValue($notifLog) || []).filter(e => e?.scope === 'tasks').slice(-5) : []
+      // shows node state) as copy-to-clipboard tiles — default OFF.
+      // Hook UNconditional: useValue inside a ternary breaks rules-of-hooks
+      // (render order flips with the toggle → pane renders into error boundary).
+      const notifEntries = useValue($notifLog)
+      const taskLog = paneLogOn ? notifEntries.filter(e => e?.scope === 'tasks').slice(-5) : []
 
       return jsxs('div', {
         className: 'flex h-full flex-col gap-2 p-3 text-sm',
