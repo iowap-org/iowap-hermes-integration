@@ -335,25 +335,41 @@ try {
     // non-terminal transitions stay silent (registry moves on)
     r = mod.__test.watchSweep(r.nextMap, [row('running', ['claimed'], 'demo')], t)
     assert(!r.lines.length, 'non-terminal transitions must not post')
-    // stage completed → exactly one line with the result preview
+    // stage completed → exactly one EVENT line — the node's result preview
+    // itself must NEVER enter the chat (T-016, PR review point 3)
     r = mod.__test.watchSweep(r.nextMap, [row('running', ['completed'], 'demo', null, 'done ok')], t)
-    assert(r.lines.length === 1 && r.lines[0] === 'watchStage|demo|t13|1|completed|done ok',
-      'stage completion must post once with the preview and task id')
+    assert(r.lines.length === 1 && r.lines[0] === 'watchStage|demo|t13|1|completed',
+      'stage completion posts an event-only line (no node output)')
+    assert(r.targets.length === 1 && r.targets[0] === null, 'line without session origin targets null')
     // final state → posted; unchanged stage is NOT re-posted
     r = mod.__test.watchSweep(r.nextMap, [row('completed', ['completed'], 'demo')], t)
-    assert(r.lines.length === 1 && r.lines[0] === 'watchFinal|demo|t13|completed|', 'final must post once')
+    assert(r.lines.length === 1 && r.lines[0] === 'watchFinal|demo|t13|completed', 'final must post once')
     // same poll again → dup-guard stays silent
     const again = mod.__test.watchSweep(r.nextMap, [row('completed', ['completed'], 'demo')], t)
     assert(!again.lines.length, 'dup guard must not post twice')
-    // failed final: stage failure and the final line post in ONE sweep
+    // failed final: stage failure and the final line post in ONE sweep —
+    // the raw error string must NOT ride along
     const f = mod.__test.watchSweep(
       { t13b: { status: 'running', stages: ['claimed'] } },
       [{ task_id: 't13b', name: 'demo-b', status: 'failed', error: 'boom', stages: [{ status: 'failed', result_preview: '' }] }],
       t)
     assert(f.lines.length === 2
-      && f.lines[0] === 'watchStage|demo-b|t13b|1|failed|'
-      && f.lines[1] === 'watchFinal|demo-b|t13b|failed|boom',
-      'failed final must post the stage failure and the final line')
+      && f.lines[0] === 'watchStage|demo-b|t13b|1|failed'
+      && f.lines[1] === 'watchFinal|demo-b|t13b|failed',
+      'failed final posts event-only lines (error text stays out)')
+  }
+
+  // T-016 origin-session targets ride per line.
+  {
+    const assert = (cond, msg) => { if (!cond) throw new Error('T-016 targets: ' + msg) }
+    const t = (...a) => a.join('|')
+    const oo = mod.__test.watchSweep(
+      { o1: { status: 'running', stages: ['claimed'], seenAt: 0, warned: false } },
+      [{ task_id: 'o1', name: 'orig', status: 'completed', session_id: 'sess_9', error: null, stages: [{ status: 'completed', result_preview: '' }] }],
+      t)
+    assert(oo.lines.length === 2 && oo.targets.length === 2
+      && oo.targets[0] === 'sess_9' && oo.targets[1] === 'sess_9',
+      'origin session id rides on every posted line')
   }
 
   // T-013 longrun: non-terminal > 5 min → exactly one hint, then silent.
@@ -374,8 +390,8 @@ try {
     assert(!r.lines.length, 'longrun hint must fire only once')
     r = mod.__test.watchSweep(r.nextMap, [done], t, 1_000_000 + 8 * 60_000)
     assert(r.lines.length === 2
-      && r.lines[0] === 'watchStage|longtask|lr1|1|completed|ok'
-      && r.lines[1] === 'watchFinal|longtask|lr1|completed|',
+      && r.lines[0] === 'watchStage|longtask|lr1|1|completed'
+      && r.lines[1] === 'watchFinal|longtask|lr1|completed',
       'final still posts after longrun (stage + final in one sweep)')
   }
 
@@ -403,6 +419,17 @@ try {
     assert(!d.lines.length, 'relay down must not repeat')
     d = mod.__test.fleetSweep(d.nextMap, mk('online'), t)
     assert(d.lines.length === 1 && d.lines[0] === 'fleetRelayBack', 'relay recovery posts')
+  }
+
+  // T-016 defaults: with factory settings (all gates OFF) NO render pass —
+  // including every watch-enabled sweep the chip performs — may touch the
+  // composer. submit(null)/insert(null) without consent is the reviewer's
+  // core complaint; prove absence.
+  {
+    const assert = (cond, msg) => { if (!cond) throw new Error('T-016 defaults: ' + msg) }
+    const composer = globalThis.__COMPOSER__ = globalThis.__COMPOSER__ || { submitted: [], inserted: [] }
+    assert(!composer.submitted.length, 'factory settings: no composer submit may happen')
+    assert(!composer.inserted.length, 'factory settings: no composer insert may happen')
   }
 
   // Error path (backend unreachable)

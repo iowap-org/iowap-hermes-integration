@@ -2,6 +2,55 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.5.0 — 2026-10-30
+
+### Added
+- **Fully configurable task & fleet notification center** (Notifications
+  page, sidebar + ⌘K): chat, pane and chip each switchable per area,
+  chat target (origin / manual session id), draft | direct mode, one
+  fleet chat session id, bounded event log (100 entries, clearable).
+- **Notifications in chat, pane and chip**: chat posts event-only watch
+  lines into the submitting session (fail-closed, per teknium1 review);
+  the pane shows task tiles with copy-to-clipboard; the status chip
+  flashes the last event ("node <name> online/offline", "task <id>
+  completed", relay up/down).
+- **All defaults OFF**: nothing posts, flashes or tiles until explicitly
+  enabled on the Notifications page.
+- Fleet-page activity rows: last 8 tracked tasks with per-stage status
+  dots; per-locale nav labels.
+
+### Fixed
+- A failed direct submit no longer silently degrades into a draft — it
+  surfaces as a toast + log line; drafts are only written in draft mode.
+- The task watch bridge (tools/iowap-task) deploys as the 5th pair with
+  md5 verify — it was silently missing from every deploy before.
+- Chip flash tolerates both payload shapes (string vs. object) so the
+  flash reports the correct event.
+- Rules-of-hooks crash in the fleet pane (conditional useValue inside a
+  ternary broke the Slot tree).
+- Undefined stageDotClass symbol on activity-row dots — crash on the
+  first activity render with data.
+- Task tiles wrap (`break-all`) instead of truncating mid-name.
+
+### Notes
+- The deploy/commit gate now verifies the render-smoke exit code, so a
+  broken build can no longer be pushed or synced unnoticed.
+- Storage quirk observed once: an app restart can lose plugin-storage
+  config (mode fell back to its draft default); re-selecting the option
+  re-persists it. Failing safe, no behavior change needed.
+
+### Testing
+- Release-exercised live on the night of 2026-10-30: many test tasks
+  fired end-to-end (single runs, a 5-task batch, draft and direct mode,
+  mounted and unmounted targets, chip flash, pane tiles and fleet
+  activity rows) — every delivery event-only and fail-closed, every
+  toggle verified.
+
+### Acknowledgements
+- Huge thanks to **teknium1** — an extremely thorough review, as always.
+  Every point landed in code, and the notification center is the better
+  product for it.
+
 ## 0.4.2 — 2026-10-29 (PR #144628 review response)
 
 ### Changed — consent model overhauled (teknium1 review, all three points)

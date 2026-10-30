@@ -12,7 +12,8 @@ IOWAP fleet data into the desktop app:
 - **Fleet pane** (right zone, draggable) — compact node list
 - **Fleet page** (`/iowap-fleet`, sidebar nav + ⌘K) — full overview: status,
   load, queue depth, capabilities per node, plus an **Activity** section
-  (daemon self-sight, tracked tasks, task-capability provider health)
+  (daemon self-sight, tracked tasks with per-stage status dots,
+  task-capability provider health)
 - **Tasks page** (`/iowap-tasks`, sidebar nav + ⌘K) — submit a task to any
   task-type capability (capability picker, JSON payload, optional name),
   track an existing task by its relay id, and watch tracked tasks live
@@ -23,6 +24,11 @@ IOWAP fleet data into the desktop app:
   `~/.hermes/plugin-data/iowap/task-track-iowap.json`. Owner-directed tasks
   (`--owner <node_id>`) show as `delegated` rows (result unreadable from
   this node — server-side T-005g scoping) instead of fetch errors.
+- **Notifications page** (`/iowap-notifications`, sidebar nav + ⌘K) —
+  switches for chat posts, pane tiles and chip flash (tasks / fleet
+  areas), chat target (origin or manual session id), draft | direct mode
+  and a bounded event log (100 entries, clearable). Everything defaults
+  OFF.
 - **⌘K commands** — refresh fleet data, notify fleet status, open the pages
 
 ## Task watcher & fleet watch
@@ -30,7 +36,8 @@ IOWAP fleet data into the desktop app:
 - **Task watcher** — new-task acknowledgement, stage results and final
   states are posted **automatically into the active chat** (`host.composer`
   with user-typed authority, **fail-closed, never a broadcast**: without a
-  mounted composer the update lands as a draft plus a toast). Posted lines
+  mounted composer the update surfaces as a toast; a failed direct submit
+  fails honestly instead of silently degrading into a draft). Posted lines
   carry the task id. Toggle: the switch on the Tasks page or ⌘K "IOWAP:
   toggle task watch posts" (persisted; the sweep registry is persisted
   too, so reloads and redeploys never double-post). Tasks non-terminal
