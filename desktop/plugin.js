@@ -309,6 +309,9 @@ export default {
     const $cfgChipFlash = atom(cfg('chip.flash.enabled', false))
     // T-17 pane tiles: task lines as copy-to-clipboard tiles — also default OFF.
     const $cfgPaneLog = atom(cfg('pane.log.enabled', false))
+    // T-17 refinement: tile count 1-5 (dropdown) + chip flash seconds (default 5).
+    const $cfgPaneCount = atom(cfg('pane.log.count', 5))
+    const $cfgFlashSecs = atom(cfg('chip.flash.seconds', 5))
     const cfgTasksChatOn = () => $watchOn.get()
     const cfgFleetChatOn = () => $cfgFleetChat.get()
     function setCfg(atomRef, key, v) {
@@ -363,9 +366,10 @@ export default {
       const tone = kind === 'taskDone' || kind === 'nodeUp' || kind === 'relayUp' ? 'good'
         : kind === 'nodeDown' || kind === 'relayDown' ? 'bad' : 'warn'
       const args = name ? [name] : []
-      $chipFlash.set({ key, args, tone, until: Date.now() + 5_000 })
+      const secs = Math.min(60, Math.max(1, Number($cfgFlashSecs.get()) || 5))
+      $chipFlash.set({ key, args, tone, until: Date.now() + secs * 1000 })
       if (flashTimer) clearTimeout(flashTimer)
-      flashTimer = setTimeout(() => $chipFlash.set(null), 5_000)
+      flashTimer = setTimeout(() => $chipFlash.set(null), secs * 1000)
     }
 
     // T-17 pane task tiles: click a tile → copy the watch line to clipboard.
@@ -595,12 +599,13 @@ export default {
       const info = summaryOf(data)
       const hl = healthLineOf(data?.health)
       // T-17: last task lines (no fleet rows here — the node list already
-      // shows node state) as copy-to-clipboard tiles — default OFF.
+      // shows node state) as copy-to-clipboard tiles — default OFF, count 1-5.
       // Hooks UNconditional: useValue inside a ternary breaks rules-of-hooks
       // (render order flips with the toggle → pane renders into error boundary).
       const paneLogOn = useValue($cfgPaneLog)
       const notifEntries = useValue($notifLog)
-      const taskLog = paneLogOn ? notifEntries.filter(e => e?.scope === 'tasks').slice(-5) : []
+      const paneCount = Math.min(5, Math.max(1, Number(useValue($cfgPaneCount)) || 5))
+      const taskLog = paneLogOn ? notifEntries.filter(e => e?.scope === 'tasks').slice(-paneCount) : []
 
       return jsxs('div', {
         className: 'flex h-full flex-col gap-2 p-3 text-sm',
@@ -1290,6 +1295,8 @@ export default {
         paneLogEmpty: 'no task messages yet — they appear here once a task finishes',
         copyHint: 'copy to clipboard',
         copiedMsg: 'copied to clipboard',
+        paneCountLabel: 'number of task tiles (1-5)',
+        flashSecsLabel: 'chip flash duration (seconds)',
         palNotif: 'IOWAP: open notifications',
         watchLongrun: (n, m) => `⏳ iowap task "${n}" running for at least ${m} min — still going`,
         fleetOffline: (n, st) => `⚠️ iowap fleet: node "${n}" went ${st || 'offline'}`,
@@ -1388,6 +1395,8 @@ export default {
         paneLogEmpty: 'noch keine Task-Meldungen — sie erscheinen, sobald eine Task endet',
         copyHint: 'in die Zwischenablage kopieren',
         copiedMsg: 'kopiert',
+        paneCountLabel: 'Anzahl der Task-Kacheln (1-5)',
+        flashSecsLabel: 'Chip-Flash-Dauer (Sekunden)',
         palNotif: 'IOWAP: Benachrichtigungen öffnen',
         watchLongrun: (n, m) => `⏳ IOWAP-Task "${n}" läuft mindestens seit ${m} min — noch aktiv`,
         fleetOffline: (n, st) => `⚠️ IOWAP-Flotte: Node "${n}" jetzt ${st || 'offline'}`,
@@ -1485,6 +1494,8 @@ export default {
         paneLogEmpty: 'aún no hay mensajes de tareas — aparecerán cuando termine una tarea',
         copyHint: 'copiar al portapapeles',
         copiedMsg: 'copiado',
+        paneCountLabel: 'número de fichas de tareas (1-5)',
+        flashSecsLabel: 'duración del flash (segundos)',
         palNotif: 'IOWAP: abrir notificaciones',
         watchLongrun: (n, m) => `⏳ Tarea IOWAP "${n}" en ejecución desde hace al menos ${m} min — sigue activa`,
         fleetOffline: (n, st) => `⚠️ Flota IOWAP: el nodo "${n}" está ${st || 'offline'}`,
@@ -1582,6 +1593,8 @@ export default {
         paneLogEmpty: 'aucun message de tâche — ils apparaissent dès qu\'une tâche se termine',
         copyHint: 'copier dans le presse-papiers',
         copiedMsg: 'copié',
+        paneCountLabel: 'nombre de tuiles de tâches (1-5)',
+        flashSecsLabel: 'durée du flash (secondes)',
         palNotif: 'IOWAP : ouvrir les notifications',
         watchLongrun: (n, m) => `⏳ Tâche IOWAP "${n}" en cours depuis au moins ${m} min — toujours active`,
         fleetOffline: (n, st) => `⚠️ Flotte IOWAP : le nœud "${n}" est passé ${st || 'hors ligne'}`,
@@ -1641,6 +1654,8 @@ export default {
       const tasksNotify = useValue($cfgTasksNotify)
       const chipFlash = useValue($cfgChipFlash)
       const paneLog = useValue($cfgPaneLog)
+      const paneCount = Math.min(5, Math.max(1, Number(useValue($cfgPaneCount)) || 5))
+      const flashSecs = Math.min(60, Math.max(1, Number(useValue($cfgFlashSecs)) || 5))
       const tasksTarget = useValue($cfgTasksTarget)
       const tasksSession = useValue($cfgTasksSession)
       const tasksMode = useValue($cfgTasksMode)
@@ -1716,6 +1731,27 @@ export default {
                   t('paneLogLabel')
                 ]
               }),
+              jsxs('div', { className: 'flex items-center gap-3 text-sm', children: [
+                jsx('span', { className: 'text-sm text-muted-foreground', children: t('paneCountLabel') }),
+                jsx(Select, {
+                  value: String(paneCount),
+                  onValueChange: v => { haptic('tap'); setCfg($cfgPaneCount, 'pane.log.count', Math.min(5, Math.max(1, Number(v) || 5))) },
+                  children: [
+                    jsx(SelectTrigger, { className: 'w-16', children: jsx(SelectValue, {}) }),
+                    jsx(SelectContent, {
+                      children: [1, 2, 3, 4, 5].map(n => jsx(SelectItem, { key: n, value: String(n), children: String(n) }))
+                    })
+                  ]
+                })
+              ] }),
+              jsxs('div', { className: 'flex items-center gap-3 text-sm', children: [
+                jsx('span', { className: 'text-sm text-muted-foreground', children: t('flashSecsLabel') }),
+                jsx(Input, {
+                  type: 'number', min: 1, max: 60, className: 'w-20',
+                  value: String(flashSecs),
+                  onChange: evt => setCfg($cfgFlashSecs, 'chip.flash.seconds', Math.min(60, Math.max(1, Number(evt.target.value) || 5)))
+                })
+              ] }),
               tasksChat ? jsx('div', { className: 'space-y-3 rounded-md border bg-muted/30 p-3', children: [
                 jsx('div', { className: 'text-xs font-medium', children: t('targetLabel') }),
                 jsxs('div', { className: 'flex flex-col gap-1.5', children: [
