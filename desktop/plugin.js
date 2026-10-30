@@ -420,17 +420,15 @@ export default {
       if ($cfgTasksMode.get() === 'direct') {
         let ok = false
         try { ok = host.composer.submit(target, text) } catch { /* fall through */ }
-        if (!ok) {
-          try { ok = host.composer.insertText(target, text, { mode: 'block' }) } catch { /* nothing */ }
-        }
         if (ok) return
-      } else {
-        try { host.composer.insertText(target, text, { mode: 'block' }) } catch { /* nothing */ }
-        if (notifyOn) try { host.notify({ kind: 'info', message: `iowap watch — ${text}` }) } catch { /* nothing */ }
+        // mode says DIRECT — no silent downgrade into a draft (Ronny: 'draft
+        // ist aber AUS'): fail honestly as toast/log; retry lives with the user
+        if (notifyOn) { try { host.notify({ kind: 'warning', message: `iowap watch — ${text}` }) } catch { /* nothing */ } }
         return
       }
-      // direct submit failed (session not mounted) → notify fallback
-      try { host.notify({ kind: 'warning', message: `iowap watch — ${text}` }) } catch { /* nothing */ }
+      // draft mode → land the lines as an unsubmitted draft only
+      try { host.composer.insertText(target, text, { mode: 'block' }) } catch { /* nothing */ }
+      if (notifyOn) { try { host.notify({ kind: 'info', message: `iowap watch — ${text}` }) } catch { /* nothing */ } }
     }
 
     // Fleet watch state: node statuses + relay reachability (T-014). First
@@ -785,13 +783,20 @@ export default {
                 })
               : null,
             tasksQ.data?.tasks?.length
-              ? jsxs('div', { className: 'flex flex-wrap items-center gap-1.5 text-xs', children:
-                  tasksQ.data.tasks.map(x => jsxs('span', {
-                    className: 'inline-flex items-center gap-1 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5',
+              ? jsxs('div', { className: 'flex flex-col gap-1', children:
+                  tasksQ.data.tasks.slice(0, 8).map(x => jsxs('div', {
+                    className: 'flex items-center gap-2 rounded border border-(--ui-stroke-secondary) px-2 py-1 text-xs',
                     children: [
                       jsx(StatusDot, { tone: stageTone(x.status) }),
-                      jsx('span', { className: 'tabular-nums', children: (x.name || x.task_id).slice(0, 28) }),
-                      jsx('span', { className: 'truncate text-(--ui-text-quaternary)', children: x.status })
+                      jsx('span', { className: 'shrink-0 font-medium', children: String(x.name || x.task_id) }),
+                      jsx('span', { className: 'truncate font-mono text-[10px] text-(--ui-text-quaternary)', children: x.task_id }),
+                      jsx('span', { className: 'flex-1' }),
+                      // per-stage dots: mini status dots, one per stage
+                      ...(x.stages || []).map((s, i) => jsx('span', {
+                        key: i,
+                        className: cn('h-1.5 w-1.5 shrink-0 rounded-full', stageDotClass(s?.status))
+                      })),
+                      jsx('span', { className: 'shrink-0 tabular-nums text-(--ui-text-tertiary)', children: x.status })
                     ]
                   }, x.task_id))
                 })
