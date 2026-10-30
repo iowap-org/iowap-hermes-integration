@@ -141,6 +141,12 @@ const LONGRUN_MS = 5 * 60_000
 // (seenAt/warned) rides inside the registry values; duplication is prevented
 // by the stage/task transition guards, not by a whole-snapshot compare.
 // Longrun: non-terminal > 5 min → ONE hint per task.
+// Mini-dot color class per stage/task status — T-17 activity rows on the
+// fleet page. Unmapped statuses render neutral grey.
+function stageDotClass(status) {
+  return ({ completed: 'bg-emerald-500', failed: 'bg-rose-500', timed_out: 'bg-rose-500', running: 'bg-amber-400', paused: 'bg-amber-300', pending: 'bg-zinc-400' })[status || ''] || 'bg-zinc-300'
+}
+
 // Pure sweep: (prevMap, tasks, t, now) → { lines, targets, nextMap }. One
 // line per meaningful transition — event-only, NO node output (PR #144628
 // review point 3: result_preview/error never enter chat; whoever needs the
