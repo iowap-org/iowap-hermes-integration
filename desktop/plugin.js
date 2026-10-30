@@ -349,15 +349,20 @@ export default {
     const $chipFlash = atom(null)
     let flashTimer = null
     function chipFlashShow(flash, t) {
-      if (!$cfgChipFlash.get() || !flash) return
-      const key = flash.kind === 'taskDone' ? 'chipTaskDone'
-        : flash.kind === 'taskFailed' ? 'chipTaskFailed'
-          : flash.kind === 'nodeDown' ? 'chipNodeDown'
-            : flash.kind === 'nodeUp' ? 'chipNodeUp'
-              : flash.kind === 'relayDown' ? 'chipRelayDown' : 'chipRelayUp'
-      const tone = flash.kind === 'taskDone' || flash.kind === 'nodeUp' || flash.kind === 'relayUp' ? 'good'
-        : flash.kind === 'nodeDown' || flash.kind === 'relayDown' ? 'bad' : 'warn'
-      const args = flash.name ? [flash.name] : []
+      if (!flash) return
+      // watchSweep emits a bare string kind ('taskDone'|'taskFailed');
+      // fleetSweep emits { kind, name? } — tolerate both shapes here.
+      const kind = typeof flash === 'string' ? flash : flash?.kind
+      const name = typeof flash === 'string' ? null : flash?.name
+      if (!$cfgChipFlash.get() || !kind) return
+      const key = kind === 'taskDone' ? 'chipTaskDone'
+        : kind === 'taskFailed' ? 'chipTaskFailed'
+          : kind === 'nodeDown' ? 'chipNodeDown'
+            : kind === 'nodeUp' ? 'chipNodeUp'
+              : kind === 'relayDown' ? 'chipRelayDown' : 'chipRelayUp'
+      const tone = kind === 'taskDone' || kind === 'nodeUp' || kind === 'relayUp' ? 'good'
+        : kind === 'nodeDown' || kind === 'relayDown' ? 'bad' : 'warn'
+      const args = name ? [name] : []
       $chipFlash.set({ key, args, tone, until: Date.now() + 5_000 })
       if (flashTimer) clearTimeout(flashTimer)
       flashTimer = setTimeout(() => $chipFlash.set(null), 5_000)
