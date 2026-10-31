@@ -1,7 +1,7 @@
 # IOWAP Hermes Integration
 
-**IOWAP** ([Infrastructure · Offloading · Workload Assignment
-Platform](https://github.com/iowap-org/iowap)) is a distributed capability
+**IOWAP** ([Inter-Node Offload · Workload Advertisement ·
+Protocol](https://github.com/iowap-org/iowap)) is a distributed capability
 framework: nodes claim what they can do, the relay connects them, and
 workloads get routed to whichever node actually has the capability.
 
