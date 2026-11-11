@@ -845,23 +845,11 @@ async def tasks() -> dict:
 
     async def _safe(tid: str) -> dict:
         m = meta.get(tid) or {}
-        if m.get("delegated"):
-            # Owner-scoped tasks are intentionally unreadable from this node
-            # (server-side T-005g owner scoping) — render an honest
-            # placeholder row instead of a per-reload fetch_error.
-            return {
-                "task_id": tid,
-                "name": m.get("name") or m.get("capability") or "delegated task",
-                "status": "delegated",
-                "capability": m.get("capability"),
-                "owner_node_id": m.get("owner"),
-                "delegated": True,
-                "stages": [],
-                "artifacts": [],
-                "notes": [],
-                "note": ("result not readable from this node — owner-scoped "
-                         "(node-cli task result <id> on the owner, or ask the relay admin DB)"),
-            }
+        # T-227 reality (2026-11-10): the SENDER can read owner-directed task
+        # results (tasks.submitted_by matches this node's identity). Try the
+        # relay fetch FIRST; the "delegated" placeholder is only the fallback
+        # for genuinely unreadable tasks — a hard-coded "delegated" status
+        # never went terminal, which silenced the task watcher forever.
         try:
             data = await _fetch_task(tid)
             summary = _summarize_task(data)
@@ -869,8 +857,31 @@ async def tasks() -> dict:
             # results back into exactly this session
             if m.get("session_id"):
                 summary["session_id"] = m["session_id"]
+            # T-248 first-sight-terminal: epoch-seconds freshness gate for the
+            # frontend watcher — a task that finishes INSIDE one poll interval
+            # is otherwise invisible (first sight = register only). The
+            # frontend posts a terminal first sight only when this is fresh
+            # (< 5 min), so historical rows never re-post after app reloads.
+            if m.get("submitted_at") is not None:
+                summary["submitted_at"] = m["submitted_at"]
             return summary
         except Exception as exc:
+            if m.get("delegated"):
+                # Owner-scoped task unreadable from this node — render a
+                # placeholder row instead of a per-reload fetch_error.
+                return {
+                    "task_id": tid,
+                    "name": m.get("name") or m.get("capability") or "delegated task",
+                    "status": "delegated",
+                    "capability": m.get("capability"),
+                    "owner_node_id": m.get("owner"),
+                    "delegated": True,
+                    "stages": [],
+                    "artifacts": [],
+                    "notes": [],
+                    "note": ("result not readable from this node — owner-scoped "
+                             "(node-cli task result <id> on the owner, or ask the relay admin DB)"),
+                }
             errors.append(f"{tid}: {type(exc).__name__}: {str(exc)[:150]}")
             return {"task_id": tid, "status": "fetch_error", "error": str(exc)[:200]}
 
