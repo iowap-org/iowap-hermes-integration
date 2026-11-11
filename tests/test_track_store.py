@@ -174,3 +174,80 @@ async def test_tasks_endpoint_passes_session_origin(track_file, monkeypatch):
     out = await plugin_api.tasks()
     row = next(t for t in out["tasks"] if t["task_id"] == "tX")
     assert row["session_id"] == "sess_ABC"
+
+
+def _load_bridge(track_file, monkeypatch):
+    bridge_path = _HERE.parent / "tools" / "iowap-task"
+    loader = importlib.machinery.SourceFileLoader("iowap_task_bridge2", str(bridge_path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bridge = importlib.util.module_from_spec(spec)
+    loader.exec_module(bridge)
+    bridge.TRACK_FILE = track_file  # redirect to the test file
+    return bridge
+
+
+def test_submit_defaults_session_from_env(track_file, monkeypatch):
+    """Agent-session submits must carry the submitting session id WITHOUT an
+    explicit --session: HERMES_SESSION_ID is set in every Hermes session env.
+    Without it (desktop gateway subprocess), session_id stays null."""
+    monkeypatch.setenv("HERMES_SESSION_ID", "20261111_211844_88bd6f")
+    bridge = _load_bridge(track_file, monkeypatch)
+
+    async def _noop(*_a, **_k):  # never actually reached — sync cmd path
+        raise AssertionError("node-cli must not run in this test")
+
+    def fake_node_cli_json(args):
+        cap = str(args[2]).split(":", 1)[0]
+        return {"task_id": "envS1", "stage_id": "s1", "capability": cap, "status": "pending"}
+
+    monkeypatch.setattr(bridge, "node_cli_json", fake_node_cli_json)
+    ns = type("NS", (), {})()
+    ns.stage = "mc.status:{}"
+    ns.name = None
+    ns.priority = None
+    ns.owner = None
+    ns.session = None
+    bridge.cmd_submit(ns)
+
+    store = bridge.store_read()
+    assert store["meta"]["envS1"]["session_id"] == "20261111_211844_88bd6f"
+
+
+def test_submit_explicit_session_beats_env(track_file, monkeypatch):
+    monkeypatch.setenv("HERMES_SESSION_ID", "from_env")
+    bridge = _load_bridge(track_file, monkeypatch)
+
+    def fake_node_cli_json(args):
+        return {"task_id": "envS2", "capability": "mc.status", "status": "pending"}
+
+    monkeypatch.setattr(bridge, "node_cli_json", fake_node_cli_json)
+    ns = type("NS", (), {})()
+    ns.stage = "mc.status:{}"
+    ns.name = None
+    ns.priority = None
+    ns.owner = None
+    ns.session = "explicit_9"
+    bridge.cmd_submit(ns)
+
+    store = bridge.store_read()
+    assert store["meta"]["envS2"]["session_id"] == "explicit_9"
+
+
+def test_submit_session_none_without_env(track_file, monkeypatch):
+    monkeypatch.delenv("HERMES_SESSION_ID", raising=False)
+    bridge = _load_bridge(track_file, monkeypatch)
+
+    def fake_node_cli_json(args):
+        return {"task_id": "envS3", "capability": "mc.status", "status": "pending"}
+
+    monkeypatch.setattr(bridge, "node_cli_json", fake_node_cli_json)
+    ns = type("NS", (), {})()
+    ns.stage = "mc.status:{}"
+    ns.name = None
+    ns.priority = None
+    ns.owner = None
+    ns.session = None
+    bridge.cmd_submit(ns)
+
+    store = bridge.store_read()
+    assert store["meta"]["envS3"]["session_id"] is None
