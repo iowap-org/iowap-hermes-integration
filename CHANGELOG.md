@@ -2,6 +2,30 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.5.1 — 2026-11-11
+
+### Fixed
+- **Agent-session submits carry their origin session** (T-016/T-256):
+  `tools/iowap-task` now defaults `session_id` to `HERMES_SESSION_ID`
+  (explicit `--session` wins), so watcher lines land via the
+  `draft | direct` mode instead of regressing to an active-composer
+  draft. Three repo tests pin the resolution chain (env default,
+  explicit beats env, no env → null).
+- **Delegated rows fetch first (T-227)**: owner-directed tasks are
+  readable by the sender; `/tasks` now renders real relay status and
+  only falls back to the `delegated` placeholder row when the fetch
+  genuinely fails. A hard-coded non-terminal placeholder kept the
+  watcher silent forever.
+- **First-sight-terminal freshness gate (T-248)**: a task that finishes
+  inside one poll interval is no longer invisible — the watcher posts
+  one terminal line when the row's `submitted_at` is < 5 min old,
+  historical rows still register silently (no re-post after reloads).
+- **Watcher polls in background windows**: `refetchIntervalInBackground`
+  is on, so an idle 60-s poll keeps running while the desktop window is
+  out of focus — seconds-fast capabilities (e.g. `mc.status`) are caught
+  by the freshness gate instead of slipping silently. (An app that is
+  closed entirely still cannot post — no client, no composer.)
+
 ## 0.5.0 — 2026-10-30
 
 ### Added
