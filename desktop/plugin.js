@@ -172,7 +172,24 @@ function watchSweep(prevMap, tasks, t, now = Date.now()) {
       lines.push(t('watchLongrun', x.name || x.task_id, Math.max(1, Math.round((now - book.seenAt) / 60_000))))
       targets.push(x.session_id || null)
     }
-    if (!prev) continue // first sight: register only, never back-post
+    if (!prev) {
+      // First sight: normally register only, never back-post (design — no
+      // noise when old tasks re-appear). T-248 exception: a task that
+      // FINISHED before its first poll would otherwise be invisible forever
+      // (terminal tasks that complete inside one poll interval). Post the
+      // final once — freshness gate: only if the backend rode through a
+      // submitted_at younger than 5 min. Old/reloaded tasks (no fresh
+      // submitted_at) still register silently.
+      const fresh = x.submitted_at != null
+        && (now - Number(x.submitted_at) * 1000) >= 0
+        && (now - Number(x.submitted_at) * 1000) < 5 * 60_000
+      if (fresh && TERMINAL_TASK.includes(snap.status)) {
+        lines.push(t('watchFinal', x.name || x.task_id, snap.status))
+        targets.push(x.session_id || null)
+        flash = snap.status === 'completed' ? 'taskDone' : 'taskFailed'
+      }
+      continue
+    }
     const name = x.name || x.task_id
     ;(x.stages || []).forEach((st, i) => {
       const before = prev.stages?.[i]
@@ -261,7 +278,7 @@ export default {
           const busy = (tasks || []).some(x => !['completed', 'failed', 'timed_out'].includes(x.status))
           return busy || (tasks || []).length === 0 ? 5000 : 60000
         },
-        refetchIntervalInBackground: false
+        refetchIntervalInBackground: true
       })
     }
 
