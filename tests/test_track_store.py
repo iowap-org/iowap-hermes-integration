@@ -124,10 +124,22 @@ async def test_tasks_endpoint_renders_delegated_row(track_file, monkeypatch):
         "capability": "mc.list.players", "owner": "NODE23A4",
         "delegated": True, "submitted_at": time.time(), "name": "probe",
     })
-    # make sure the delegated row never triggers a node-cli fetch
-    async def _boom(task_id):  # pragma: no cover - must not be called
-        raise AssertionError(f"_fetch_task called for delegated row {task_id}")
+    # T-237: the refresh tick runs the bulk `task list` first; with the row
+    # ABSENT the delegated id gets a probe fetch (T-227: the sender may read
+    # owner-directed results) — a failed probe renders the placeholder row,
+    # never a per-reload fetch_error.
+    async def _run_node_cli(args, **kwargs):
+        if args[:2] == ["task", "list"]:
+            return json.dumps({"tasks": [], "viewer": "NODE"})
+        raise AssertionError(f"unexpected node-cli argv {args}")  # probe fails
+
+    async def _boom(task_id):
+        raise RuntimeError("node-cli exit 4: task not found")  # probe → placeholder
+
+    monkeypatch.setattr(plugin_api, "_run_node_cli", _run_node_cli)
     monkeypatch.setattr(plugin_api, "_fetch_task", _boom)
+    monkeypatch.setattr(plugin_api, "_check_setup",
+                        lambda *a, **k: {"ready": True, "reasons": []})
 
     out = await plugin_api.tasks()
     row = next(t for t in out["tasks"] if t["task_id"] == "dX")
@@ -164,16 +176,27 @@ def test_bridge_merge_matches_backend_schema(track_file):
 @pytest.mark.asyncio
 async def test_tasks_endpoint_passes_session_origin(track_file, monkeypatch):
     # T-016: /tasks rows carry the session origin — the watcher addresses
-    # its composer posts at exactly this session
+    # its composer posts at exactly this session. T-237: the row rides the
+    # bulk `task list` path (synthetic summary), not a per-task fetch.
     plugin_api._track_store_merge("tX", {"capability": "code.ai", "session_id": "sess_ABC"})
 
-    async def fake_fetch(tid):
-        return {"task": {"task_id": tid, "task_name": "n", "status": "running", "stages": []}}
+    async def fake_run(args, **kwargs):
+        if args[:2] == ["task", "list"]:
+            return json.dumps({"tasks": [{
+                "task_id": "tX", "task_name": "n", "status": "running",
+                "priority": 0, "owner_node_id": None, "submitted_by": "NODE",
+                "timeout_seconds": 300, "created_at": "c", "updated_at": "u",
+                "completed_at": None,
+            }], "viewer": "NODE"})
+        raise AssertionError(f"unexpected node-cli argv {args}")
 
-    monkeypatch.setattr(plugin_api, "_fetch_task", fake_fetch)
+    monkeypatch.setattr(plugin_api, "_run_node_cli", fake_run)
+    monkeypatch.setattr(plugin_api, "_check_setup",
+                        lambda *a, **k: {"ready": True, "reasons": []})
     out = await plugin_api.tasks()
     row = next(t for t in out["tasks"] if t["task_id"] == "tX")
     assert row["session_id"] == "sess_ABC"
+    assert row["stages_fetched"] is False  # bulk-only row: no detail fetch
 
 
 def _load_bridge(track_file, monkeypatch):

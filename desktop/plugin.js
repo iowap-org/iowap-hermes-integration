@@ -90,6 +90,29 @@ function queueOf(n) {
 const TASK_KEY = [ID, 'tasks']
 const ACTIVITY_KEY = [ID, 'activity']
 
+// T-237 filter chips for the tasks page (English-only labels per board rule
+// T-250-r2 — the i18n keys resolve through the en bundle for every locale).
+// Each chip narrows the backend bulk query (status → --status csv); 'all'
+// keeps the default, unfiltered shared view.
+const TASK_FILTERS = [
+  { key: 'all', i18nKey: 'filterAll', status: null },
+  { key: 'active', i18nKey: 'filterActive', status: 'pending,running' },
+  { key: 'failed', i18nKey: 'filterFailed', status: 'failed' },
+  { key: 'cancelled', i18nKey: 'filterCancelled', status: 'cancelled' }
+]
+
+// T-237 passthrough query string: status/sender ride the backend /tasks
+// filters (status → --status, sender → --submitted-by). Empty string when
+// nothing narrows — the page then renders the shared unfiltered query.
+function buildFilterQs(filterKey, sender) {
+  const parts = []
+  const csv = (TASK_FILTERS.find(f => f.key === filterKey) || {}).status
+  if (csv) parts.push(`status=${encodeURIComponent(csv)}`)
+  const s = (sender || '').trim()
+  if (s) parts.push(`sender=${encodeURIComponent(s)}`)
+  return parts.join('&')
+}
+
 // Stage → dot tone (mirrors the relay state machine pending→claimed→completed)
 function stageTone(st) {
   if (st === 'completed') return 'good'
@@ -837,7 +860,8 @@ export default {
     }
 
     // -----------------------------------------------------------------
-    // Tasks page (/iowap-tasks): submit + track + live status list
+    // Tasks page (/iowap-tasks): submit + track + filter chips (T-237) +
+    // live status list + expandable card details
     // -----------------------------------------------------------------
     function StageRow({ s }) {
       return jsxs('div', {
@@ -870,6 +894,27 @@ export default {
     }
 
     function TaskCard({ task }) {
+      const t = usePluginI18n(ID)
+      // T-237: bulk rows carry row-level status only — the full stage/
+      // artifact view arrives on the explicit detail fetch when the card is
+      // expanded (backend GET /tasks/{id}). Terminal rows already carry
+      // stages (one-time transition fetch); legacy rows without the
+      // stages_fetched flag render exactly as before. One card open at a
+      // time ($expandedTask) — the detail query is cached per task id.
+      const open = useValue($expandedTask) === task.task_id
+      const needDetail = open && task.stages_fetched === false && !task.error
+      const detail = useQuery({
+        queryKey: [ID, 'task-detail', task.task_id],
+        queryFn: () => ctx.rest(`/tasks/${encodeURIComponent(String(task.task_id || ''))}`, { timeoutMs: 20000 }),
+        enabled: needDetail
+      })
+      const stages = detail?.data?.ok
+        ? (detail.data.task?.stages || [])
+        : (task.stages || [])
+      const artifacts = detail?.data?.ok
+        ? (detail.data.task?.artifacts || [])
+        : (task.artifacts || [])
+      const showToggle = task.stages_fetched === false && !task.error
       return jsxs('div', {
         className: 'flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary) p-3',
         children: [
@@ -880,12 +925,31 @@ export default {
             jsx('span', { className: 'flex-1' }),
             jsx('code', { className: 'text-[10px] text-(--ui-text-quaternary)', children: task.task_id })
           ]}),
-          (task.stages || []).map(s => jsx(StageRow, { key: s.stage_id || s.stage_name, s })),
+          stages.map(s => jsx(StageRow, { key: s.stage_id || s.stage_name, s })),
+          showToggle
+            ? jsx(Button, {
+                className: 'self-start w-fit',
+                disabled: needDetail && detail?.isFetching,
+                onClick: () => { haptic('tap'); $expandedTask.set(open ? '' : task.task_id) },
+                children: open
+                  ? (needDetail && detail?.isFetching ? '…' : t('detailHide'))
+                  : t('detailOpen')
+              })
+            : null,
+          needDetail && detail?.isError
+            ? jsx('div', {
+                className: 'text-xs text-destructive break-words',
+                children: `${t('detailErr')}: ${detail.error?.message || String(detail.error || '')}`
+              })
+            : null,
+          needDetail && detail?.data && detail.data.ok === false
+            ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary) break-words', children: detail.data.error })
+            : null,
           task.error
             ? jsx('div', { className: 'text-xs text-destructive break-words', children: task.error })
             : null,
-          (task.artifacts || []).length
-            ? jsx('div', { className: 'text-[11px] text-(--ui-text-tertiary)', children: task.artifacts.map(a => a.name).join(', ') })
+          (artifacts || []).length
+            ? jsx('div', { className: 'text-[11px] text-(--ui-text-tertiary)', children: artifacts.map(a => a.name).join(', ') })
             : null
         ]
       })
@@ -967,6 +1031,11 @@ export default {
     const $adv = atom(false)
     const $raw = atom('{}')
     const $vals = atom({})
+    // T-237 filter state + once-per-session sender pre-fill + expanded card
+    const $taskFilter = atom('all')
+    const $taskSender = atom('')
+    const $expandedTask = atom('')
+    let senderPrefilled = false
 
     // -------------------------------------------------------------------
     // TaskForm: capability select (selectable only, type != native) +
@@ -1085,6 +1154,34 @@ export default {
       const formErr = useValue($formErr)
       const trackId = useValue($trackId)
 
+      // --- T-237 filter chips state -------------------------------------
+      const filter = useValue($taskFilter)
+      const sender = useValue($taskSender)
+      // Sender input pre-fills with the backend node id once it arrives
+      // (one-per-session: a user-cleared input stays cleared).
+      useEffect(() => {
+        const node = activityQ.data?.local_node?.node_id
+        if (!node || senderPrefilled) return
+        if ($taskSender.get()) { senderPrefilled = true; return }
+        $taskSender.set(node)
+        senderPrefilled = true
+      }, [activityQ.data?.local_node?.node_id])
+      // Narrowed view: a separate query on the SAME backend route with the
+      // passthrough params — the shared TASK_KEY stays unfiltered so the
+      // task watcher (chip) keeps seeing every tracked task regardless of
+      // what the page filters.
+      const filteredQs = buildFilterQs(filter, sender)
+      const filteredView = filteredQs.length > 0
+      const filteredQ = useQuery({
+        queryKey: [ID, 'tasks-filtered', filteredQs],
+        queryFn: () => ctx.rest(`/tasks?${filteredQs}`, { timeoutMs: 20000 }),
+        enabled: filteredView,
+        refetchInterval: 5000
+      })
+      const source = filteredView ? filteredQ : tasksQ
+      const tasks = source.data?.tasks || []
+      const busy = (tasksQ.data?.tasks || []).some(x => !['completed', 'failed', 'timed_out'].includes(x.status))
+
       // Backend-first: consume the computed `selectable` flag (T-010); the
       // type check is only the fallback for legacy responses without the flag.
       const caps = (activityQ.data?.capabilities || []).filter(c => c.selectable ?? (c.type !== 'native'))
@@ -1118,9 +1215,6 @@ export default {
         onError: e => host.notify({ kind: 'error', message: t('trackErr', e?.message || String(e)) })
       })
 
-      const tasks = tasksQ.data?.tasks || []
-      const busy = tasks.some(x => !['completed', 'failed', 'timed_out'].includes(x.status))
-
       return jsxs('div', {
         className: 'flex h-full flex-col gap-4 overflow-y-auto p-6 text-sm',
         children: [
@@ -1129,7 +1223,12 @@ export default {
             jsx('span', { className: 'flex-1' }),
             jsx(Button, {
               disabled: tasksQ.isFetching,
-              onClick: () => { haptic('tap'); qc.invalidateQueries({ queryKey: TASK_KEY }) },
+              onClick: () => {
+                haptic('tap')
+                qc.invalidateQueries({ queryKey: TASK_KEY })
+                qc.invalidateQueries({ queryKey: [ID, 'tasks-filtered'] })
+                qc.invalidateQueries({ queryKey: [ID, 'task-detail'] })
+              },
               children: t('refresh')
             })
           ]}),
@@ -1171,32 +1270,58 @@ export default {
             ]
           }),
 
+          // --- filter chips (T-237) — English-only labels (board rule T-250-r2) ---
+          jsxs('div', {
+            className: 'flex flex-wrap items-center gap-1.5',
+            children: [
+              ...TASK_FILTERS.map(f => jsx('button', {
+                key: f.key,
+                type: 'button',
+                onClick: () => { haptic('tap'); $taskFilter.set(f.key) },
+                className: cn(
+                  'rounded-full border px-2.5 py-0.5 text-xs transition-colors',
+                  filter === f.key
+                    ? 'border-(--ui-accent) bg-(--ui-fill-tertiary) text-(--ui-accent)'
+                    : 'border-(--ui-stroke-secondary) text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover)'
+                ),
+                children: t(f.i18nKey)
+              })),
+              jsx(Input, {
+                placeholder: t('filterSenderPh'),
+                value: sender,
+                onChange: e => $taskSender.set(e.target.value),
+                className: 'w-64 font-mono text-xs',
+                spellCheck: false
+              })
+            ]
+          }),
+
           // --- live list ---
           jsxs('div', {
             className: 'grid gap-3',
             style: { gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' },
             children: [
-              !tasksQ.data && !tasksQ.isError
+              !source.data && !source.isError
                 ? jsx('div', { className: 'text-(--ui-text-quaternary)', children: t('loading') })
                 : null,
-              tasksQ.data && !tasks.length
+              source.data && !tasks.length
                 ? jsx('div', { className: 'text-(--ui-text-quaternary)', children: t('noTasks') })
                 : null,
               tasks.map(x => jsx(TaskCard, { key: x.task_id, task: x }))
             ]
           }),
-          (tasksQ.data?.errors || []).length
+          (source.data?.errors || []).length
             ? jsxs('div', { className: 'rounded-lg border border-(--ui-stroke-secondary) p-3 text-xs', children:
-                tasksQ.data.errors.map((e, i) => jsx('div', { key: i, className: 'text-(--ui-text-tertiary) break-words', children: '⚠ ' + e }))
+                source.data.errors.map((e, i) => jsx('div', { key: i, className: 'text-(--ui-text-tertiary) break-words', children: '⚠ ' + e }))
               })
             : null,
-          tasksQ.isError
+          source.isError
             ? jsx('div', {
                 className: 'rounded-lg border border-(--ui-stroke-secondary) p-4 text-destructive',
-                children: t('loadErr') + ': ' + (tasksQ.error?.message || String(tasksQ.error || '')) + ' — ' + t('enableHint')
+                children: t('loadErr') + ': ' + (source.error?.message || String(source.error || '')) + ' — ' + t('enableHint')
               })
             : null,
-          tasksQ.data?.setup ? jsx(SetupNotice, { setup: tasksQ.data.setup }) : null,
+          source.data?.setup ? jsx(SetupNotice, { setup: source.data.setup }) : null,
           jsx('div', { className: 'text-[11px] text-(--ui-text-quaternary)', children: t('tasksScope') })
         ]
       })
@@ -1276,6 +1401,17 @@ export default {
         trackOk: tid => `tracking ${tid}`,
         trackErr: e => `track failed: ${e}`,
         noTasks: 'no tracked tasks yet',
+        // T-237 filter chips + card detail affordance — English-only UI
+        // strings per board rule T-250-r2 (new keys are not duplicated per
+        // locale; the i18n resolver falls back to `en` for every locale)
+        filterAll: 'All',
+        filterActive: 'Active',
+        filterFailed: 'Failed',
+        filterCancelled: 'Cancelled',
+        filterSenderPh: 'filter by sender node id',
+        detailOpen: 'Details',
+        detailHide: 'Hide details',
+        detailErr: 'detail fetch failed',
         noProviders: 'no providers',
         noSubmitCaps: 'no task capabilities visible — is the node daemon connected?',
         activityTitle: 'Activity',

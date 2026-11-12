@@ -36,7 +36,14 @@ Additional endpoints (T-006):
   {"ids": [...], "meta": {...}}). Owner-directed tasks (`--owner <node_id>`)
   stay unreadable from this node BY DESIGN; they are tracked as `delegated`
   rows (honest status "delegated" + note, 24h prune) instead of surfacing as
-  fetch_errors on every reload.
+  fetch_errors on every reload. T-237 refresh model: ONE bulk `task list`
+  subprocess per tick (status/updated_at/owner deltas); full task views are
+  fetched once on terminal transitions or via the explicit detail route.
+  Passthrough filters (T-268 server params): status (csv) → --status,
+  sender → --submitted-by, since/until → --since/--until.
+- GET /tasks/{task_id} — full task view (stages/artifacts/notes) for the
+  explicit detail request (card expand), cached like task-result fetches: short
+  TTL non-terminal, permanent terminal.
 - POST /tasks/submit — submit a single-stage task (capability + JSON payload)
   and track it.
 - POST /tasks/track — add an existing task_id to tracking; pass
@@ -738,7 +745,12 @@ def _tracked_list() -> list[str]:
 
 
 async def _fetch_task(task_id: str) -> dict:
-    """Fetch one task result via node-cli; caches within a short TTL."""
+    """Fetch ONE full task view via node-cli; caches within a short TTL.
+
+    T-237: this is no longer the /tasks refresh path (that runs through
+    `_bulk_status`) — it serves the explicit detail route and the one-time
+    terminal-transition fetch only. Terminal snapshots stay cached forever
+    ("never refetch terminal", unchanged pattern)."""
     now = time.monotonic()
     cached = _tasks_state.get(task_id)
     status = None
@@ -751,8 +763,117 @@ async def _fetch_task(task_id: str) -> dict:
     data = _loads_json(raw)
     if not isinstance(data, dict) or "task" not in data:
         raise RuntimeError(f"unexpected task result shape for {task_id}")
+    data["_full"] = True  # T-237 marker: this entry carries the full view
     _tasks_state[task_id] = (now, data)
     return data
+
+
+# ---------------------------------------------------------------------------
+# T-237 bulk status refresh — ONE `task list` subprocess per /tasks tick
+# instead of one `task result` per tracked task (the poll fan-out).
+# ---------------------------------------------------------------------------
+
+# Bulk status filter. The server accepts pending/running/completed/failed/
+# cancelled (api/v2/scheduler.py _LISTABLE_TASK_STATUSES; timed_out is NOT
+# listable). The plan names pending,running; `cancelled` additionally rides
+# the bulk query because its exclusion would either freeze a tracked
+# cancelled task on its stale running/pending status forever or force a
+# per-tick `task result` fallback — both worse than one extra status value.
+_BULK_STATUSES = "pending,running,cancelled"
+
+# A task row carrying one of these calls for the ONE-TIME full fetch
+# (stages/artifacts/result previews). Terminal-cached tasks never re-fetch.
+_TERMINAL_ALL = ("completed", "failed", "timed_out", "cancelled")
+
+
+def _bulk_args(status: str | None, sender: str | None,
+               since: str | None, until: str | None) -> list[str]:
+    """Exact `task list` argv (T-268 server params, node-cli 2.3.37).
+
+    status → --status (csv), sender → --submitted-by, since/until →
+    --since/--until (ISO-8601; the relay maps them onto created_since/
+    created_until). Values are plain argv elements of create_subprocess_exec
+    (no shell) — the length caps are hygiene, not safety. Without params the
+    argv is exactly the pre-T-237 default.
+    """
+    args = ["task", "list", "--status", (status or "").strip() or _BULK_STATUSES]
+    if sender and sender.strip():
+        args += ["--submitted-by", sender.strip()[:64]]
+    if since and since.strip():
+        args += ["--since", since.strip()[:128]]
+    if until and until.strip():
+        args += ["--until", until.strip()[:128]]
+    return args
+
+
+async def _bulk_status(args: list[str]) -> dict[str, dict]:
+    """ONE subprocess: `node-cli --json task list …` → {task_id: row}.
+
+    Raises on failure — the /tasks handler converts that into a single error
+    line and serves cached rows instead of fanning out per-task fetches.
+    """
+    raw = await _run_node_cli(args, timeout=20.0)
+    data = _loads_json(raw)
+    rows = data.get("tasks") if isinstance(data, dict) else None
+    if rows is None and isinstance(data, list):
+        rows = data  # tolerate a future flat-row shape
+    if not isinstance(rows, list):
+        raise TypeError("unexpected task list shape")
+    out: dict[str, dict] = {}
+    for r in rows:
+        if isinstance(r, dict) and isinstance(r.get("task_id"), str) and r["task_id"]:
+            out[r["task_id"]] = r
+    return out
+
+
+def _list_row_task(row: dict) -> dict:
+    """Project a scheduler list row onto the cached task-dict shape."""
+    keys = ("task_id", "task_name", "status", "priority", "owner_node_id",
+            "created_at", "updated_at", "completed_at", "submitted_by")
+    return {k: row.get(k) for k in keys}
+
+
+def _apply_row_delta(data: dict, row: dict) -> bool:
+    """Merge status/updated_at/completed_at/owner deltas from a list row into
+    a cached snapshot (full or synthetic). True when anything changed."""
+    task = data.setdefault("task", {})
+    changed = False
+    for k in ("status", "updated_at", "completed_at", "owner_node_id"):
+        v = row.get(k)
+        if v is not None and task.get(k) != v:
+            task[k] = v
+            changed = True
+    return changed
+
+
+def _delegated_placeholder(tid: str, m: dict) -> dict:
+    """Owner-scoped row we cannot render from this node (pre-T-237 shape)."""
+    return {
+        "task_id": tid,
+        "name": m.get("name") or m.get("capability") or "delegated task",
+        "status": "delegated",
+        "capability": m.get("capability"),
+        "owner_node_id": m.get("owner"),
+        "delegated": True,
+        "stages": [],
+        "artifacts": [],
+        "notes": [],
+        "note": ("result not readable from this node — owner-scoped "
+                 "(node-cli task result <id> on the owner, or ask the relay admin DB)"),
+    }
+
+
+def _meta_ridealong(summary: dict, m: dict) -> dict:
+    """T-016/T-248 meta riding every rendered row regardless of fetch mode:
+    the watcher composer target (session_id) and the first-sight freshness
+    gate (submitted_at). delegated marks owner-directed rows."""
+    if m.get("session_id"):
+        summary["session_id"] = m["session_id"]
+    if m.get("submitted_at") is not None:
+        summary["submitted_at"] = m["submitted_at"]
+    if m.get("delegated"):
+        summary["delegated"] = True
+    return summary
 
 
 def _summarize_task(data: dict) -> dict:
@@ -823,8 +944,25 @@ def _result_preview(result: Any) -> str | None:
 
 
 @router.get("/tasks")
-async def tasks() -> dict:
-    """Status of all tracked tasks, fetched concurrently, never raises."""
+async def tasks(
+    status: str | None = None,
+    sender: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> dict:
+    """Status of all tracked tasks — never raises.
+
+    T-237 refresh model: ONE `task list` subprocess per tick carries
+    status/updated_at/owner deltas for non-terminal tracked tasks; the full
+    `task result` view (stages/artifacts/notes) is fetched exactly once on a
+    terminal transition and otherwise only by the explicit detail route
+    (GET /tasks/{task_id}). Terminal tasks serve from the permanent cache.
+
+    Passthrough filters (T-268 server params): status (csv) → --status,
+    sender → --submitted-by, since/until → --since/--until. Without params
+    the response shape and request are exactly the pre-T-237 default; with a
+    filter active, an absent row means "filtered out" (no per-task fallback).
+    """
     started = time.monotonic()
     ids = _tracked_list()
     store = _track_store_read()
@@ -843,49 +981,100 @@ async def tasks() -> dict:
             "short_circuited": True,
         }
 
-    async def _safe(tid: str) -> dict:
-        m = meta.get(tid) or {}
-        # T-227 reality (2026-11-10): the SENDER can read owner-directed task
-        # results (tasks.submitted_by matches this node's identity). Try the
-        # relay fetch FIRST; the "delegated" placeholder is only the fallback
-        # for genuinely unreadable tasks — a hard-coded "delegated" status
-        # never went terminal, which silenced the task watcher forever.
-        try:
-            data = await _fetch_task(tid)
-            summary = _summarize_task(data)
-            # T-016: session origin rides with the row — the watcher posts
-            # results back into exactly this session
-            if m.get("session_id"):
-                summary["session_id"] = m["session_id"]
-            # T-248 first-sight-terminal: epoch-seconds freshness gate for the
-            # frontend watcher — a task that finishes INSIDE one poll interval
-            # is otherwise invisible (first sight = register only). The
-            # frontend posts a terminal first sight only when this is fresh
-            # (< 5 min), so historical rows never re-post after app reloads.
-            if m.get("submitted_at") is not None:
-                summary["submitted_at"] = m["submitted_at"]
-            return summary
-        except Exception as exc:
-            if m.get("delegated"):
-                # Owner-scoped task unreadable from this node — render a
-                # placeholder row instead of a per-reload fetch_error.
-                return {
-                    "task_id": tid,
-                    "name": m.get("name") or m.get("capability") or "delegated task",
-                    "status": "delegated",
-                    "capability": m.get("capability"),
-                    "owner_node_id": m.get("owner"),
-                    "delegated": True,
-                    "stages": [],
-                    "artifacts": [],
-                    "notes": [],
-                    "note": ("result not readable from this node — owner-scoped "
-                             "(node-cli task result <id> on the owner, or ask the relay admin DB)"),
-                }
-            errors.append(f"{tid}: {type(exc).__name__}: {str(exc)[:150]}")
-            return {"task_id": tid, "status": "fetch_error", "error": str(exc)[:200]}
+    custom_filter = any(
+        isinstance(v, str) and v.strip() for v in (status, sender, since, until)
+    )
 
-    summaries = list(await asyncio.gather(*(_safe(t) for t in ids))) if ids else []
+    # --- refresh tick: ONE bulk subprocess -----------------------------------
+    bulk_err: str | None = None
+    rows: dict[str, dict] | None = None
+    if ids:
+        try:
+            rows = await _bulk_status(_bulk_args(status, sender, since, until))
+        except Exception as exc:  # noqa: BLE001 — never-raise handler contract
+            bulk_err = f"task list: {type(exc).__name__}: {str(exc)[:150]}"
+            errors.append(bulk_err)
+            rows = None  # serve the cache; never fan out per-task fetches
+
+    summaries: list[dict] = []
+    for tid in ids:
+        m = meta.get(tid) or {}
+        row = rows.get(tid) if rows is not None else None
+        cached = _tasks_state.get(tid)
+        row_status = row.get("status") if isinstance(row, dict) else None
+        cached_status = (
+            (cached[1].get("task") or {}).get("status") if cached else None
+        )
+
+        fetch_full = False
+        if row is not None and row_status in _TERMINAL_ALL and (
+            cached is None or cached_status != row_status
+            or not cached[1].get("_full")
+        ):
+            # terminal row (filter queries may return completed/failed):
+            # fetch the full view once on the transition, then cache permanent
+            fetch_full = True
+        elif rows is not None and not custom_filter and row is None and (
+            cached is None or cached_status not in _TERMINAL_ALL
+        ):
+            # default query returned no row for this id: resolve via exactly
+            # ONE result fetch — a completed/failed/timed_out transition
+            # (completed/failed leave the bulk window, timed_out is not even
+            # listable) or a vanished task. T-227: delegated ids included —
+            # the sender can read owner-directed results.
+            fetch_full = True
+
+        if fetch_full:
+            try:
+                data = await _fetch_task(tid)
+                summary = _summarize_task(data)
+                summary["stages_fetched"] = True
+            except Exception as exc:  # noqa: BLE001 — never-raise contract
+                if m.get("delegated"):
+                    summary = _delegated_placeholder(tid, m)
+                else:
+                    errors.append(
+                        f"{tid}: {type(exc).__name__}: {str(exc)[:150]}"
+                    )
+                    summary = {
+                        "task_id": tid,
+                        "status": "fetch_error",
+                        "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                    }
+        elif m.get("delegated") and row is None:
+            # owner-scoped task with no bulk row (filtered out / list
+            # unavailable / never fetchable from this node)
+            summary = _delegated_placeholder(tid, m)
+        elif cached is not None:
+            # serve the cached snapshot, riding the row's deltas
+            if row is not None:
+                _apply_row_delta(cached[1], row)
+            summary = _summarize_task(cached[1])
+            summary["stages_fetched"] = bool(cached[1].get("_full"))
+        elif row is not None:
+            # synthesize the cache entry from the bulk row alone — stages/
+            # artifacts only arrive via the detail route or a transition
+            entry = {"task": _list_row_task(row), "stages": [], "artifacts": [], "notes": []}
+            _tasks_state[tid] = (time.monotonic(), entry)
+            summary = _summarize_task(entry)
+            summary["stages_fetched"] = False
+            if m.get("name"):
+                summary["name"] = m["name"]
+            if m.get("capability"):
+                summary["capability"] = m["capability"]
+        elif rows is None:
+            # bulk failed with nothing cached — degrade honestly, no fetch
+            summary = {
+                "task_id": tid,
+                "status": "fetch_error",
+                "error": bulk_err or "task list unavailable",
+            }
+        else:
+            # narrowed query filtered this id out — the row is simply omitted
+            continue
+        _meta_ridealong(summary, m)
+        summaries.append(summary)
+
     order = {tid: i for i, tid in enumerate(ids)}
     summaries.sort(key=lambda s: order.get(s["task_id"], 999))
     return {
@@ -894,6 +1083,32 @@ async def tasks() -> dict:
         "errors": errors,
         "elapsed_ms": int((time.monotonic() - started) * 1000),
     }
+
+
+@router.get("/tasks/{task_id}")
+async def task_detail(task_id: str) -> dict:
+    """Full task view for an explicit detail request (T-237).
+
+    The /tasks polling surface serves row-level refreshes only — stages,
+    artifacts and result previews belong to the expanded card (frontend
+    detail affordance) and terminal transitions. Caches exactly like
+    `_fetch_task`: short TTL non-terminal, permanent terminal."""
+    tid = (task_id or "").strip()
+    if not tid or len(tid) > 64:
+        return {"ok": False, "error": "invalid task_id"}
+    store = _track_store_read()
+    m = (store.get("meta") or {}).get(tid) or {}
+    try:
+        data = await _fetch_task(tid)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+        }
+    summary = _summarize_task(data)
+    summary["stages_fetched"] = True
+    _meta_ridealong(summary, m)
+    return {"ok": True, "task": summary}
 
 
 @router.post("/tasks/submit")

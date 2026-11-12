@@ -2,6 +2,43 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.6.0 — 2026-11-12
+
+### Added
+- **Tasks-page filter chips (T-237)**: a small filter bar above the task
+  list — All / Active / Failed / Cancelled, each backed by a server-side
+  status csv, plus a sender input pre-filled with this node's id (clearing
+  it returns to the full view). Filters narrow through the backend
+  `/tasks` passthrough query (`status` → `--status`, `sender` →
+  `--submitted-by`) and do not touch the watcher: the chip's shared
+  unfiltered poll keeps seeing every tracked task regardless of what the
+  page filters. Requires node-cli ≥ 2.3.37 (`task list` with filter
+  options). New UI strings are English-only (board rule T-250-r2).
+- **Passthrough filters on GET /tasks**: `status` (csv), `sender`,
+  `since`, `until` — passed through verbatim to `node-cli task list
+  --json` (`--status`, `--submitted-by`, `--since`, `--until`; `since`/
+  `until` map to the relay's `created_since`/`created_until`). Without
+  params the request and response shape are unchanged.
+- **Card detail view (T-237)**: expanding a bulk-refreshed task card
+  fetches the full stage/artifact/notes view from the new
+  GET `/tasks/{task_id}` route (cached per task like the task-result
+  fetches: short TTL non-terminal, permanent terminal). This explicit
+  detail request plus the terminal-transition fetch are the only full
+  `task result` calls left.
+
+### Changed
+- **Bulk status refresh (T-237)**: the `/tasks` polling surface no longer
+  spawns one `task result` subprocess per tracked task per tick — ONE
+  `node-cli --json task list --status pending,running,cancelled` call
+  carries status/`updated_at`/owner deltas, which update the cached rows;
+  the full task view is fetched exactly once when a task turns terminal
+  (then cache permanent — "never refetch terminal" is unchanged).
+  `cancelled` rides the bulk query (listable server-side) so tracked
+  cancellations keep their honest status without a per-tick fallback;
+  `timed_out` is not listable and resolves through a single absence
+  fallback, then converges to the terminal cache. Tracked tasks absent
+  while a filter is active simply stay out of the (narrowed) response.
+
 ## 0.5.1 — 2026-11-11
 
 ### Fixed
