@@ -2,6 +2,23 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.6.2 — 2026-11-18
+
+### Fixed
+- **Daemon self-sight without the removed CLI surface (T-250)**: iowap-cli
+  carries no daemon code since iowap-node 2.3.40 — every `node-cli daemon …`
+  invocation is now an argparse usage error (exit 2), so the /activity
+  endpoint's `daemon status` subprocess would fail on every tick and the
+  statusbar self-sight ("daemon off (completed n)") degraded to an empty
+  dict. The backend now reads `~/.relay/worker_status.json` directly and
+  probes BOTH daemon pid files (`node-daemon.pid`, `node-cli.pid`) with the
+  same signal-0 liveness probe and mode preference as the node's mode-aware
+  status (poll wins when both are alive — a state the node's T-137b guard
+  forbids; the running SSE daemon stays visible). Response shape unchanged
+  (`running`/`pid`/`active_profile`/`last_heartbeat`/`heartbeat_status`/
+  `tasks_completed`/`tasks_failed`), plus the additive `mode` field
+  (`"sse"`/`"poll"`/null). Contract tests: `tests/test_local_daemon_status.py`.
+
 ## 0.6.1 — 2026-11-18
 
 ### Added

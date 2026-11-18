@@ -204,8 +204,7 @@ async def _run_node_cli(args: list[str], timeout: float = 20.0, ok: tuple[int, .
     """Run node-cli --json <args>, return stdout (JSON text).
 
     `ok`: additional exit codes that still count as success with parseable
-    output (e.g. `daemon status` exits 1 when the daemon is not running while
-    still printing its status block).
+    output.
     """
     cmd = [_resolve_node_cli(), "--json", *args]
     env = dict(os.environ)
@@ -235,6 +234,77 @@ async def _run_node_cli(args: list[str], timeout: float = 20.0, ok: tuple[int, .
 
 def _loads_json(raw: str) -> Any:
     return json.loads(raw) if raw.strip() else None
+
+
+# ---------------------------------------------------------------------------
+# Local daemon status — direct file read over BOTH pid files (T-250)
+# ---------------------------------------------------------------------------
+
+_RELAY_DIR = Path.home() / ".relay"
+_SSE_PID_FILE = _RELAY_DIR / "node-daemon.pid"
+_POLL_PID_FILE = _RELAY_DIR / "node-cli.pid"
+_WORKER_STATUS_FILE = _RELAY_DIR / "worker_status.json"
+
+
+def _pid_alive(pid_file: Path) -> int | None:
+    """Return the pid iff the pid file exists AND its pid is alive, else None.
+
+    Same liveness probe the node side uses (signal 0 — no signal delivered;
+    EPERM from another user's process still means alive).
+    """
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return pid
+    except OSError:
+        return None
+    return pid
+
+
+def _local_daemon_status() -> dict:
+    """Mode-aware daemon self-sight WITHOUT a subprocess (T-250).
+
+    Replaces the old `node-cli daemon status` subprocess: that CLI surface
+    no longer exists (iowap-cli carries no daemon code since iowap-node
+    2.3.40 — every `node-cli daemon …` invocation is an argparse usage
+    error, exit 2). Reads worker_status.json directly and probes BOTH
+    daemon pid files exactly like the node's mode-aware status (poll first:
+    mode poll wins when both pid files are alive — a state T-137b forbids
+    in production, but the probe still reports it honestly).
+
+    Same dict shape the old kv parser produced (desktop/plugin.js consumes
+    running/heartbeat_status/tasks_completed), plus an additive `mode`
+    ("sse" | "poll" | None).
+    """
+    poll_pid = _pid_alive(_POLL_PID_FILE)
+    sse_pid = _pid_alive(_SSE_PID_FILE)
+    running = poll_pid is not None or sse_pid is not None
+    pid = poll_pid or sse_pid
+    mode = "poll" if poll_pid is not None else ("sse" if sse_pid is not None else None)
+    try:
+        status = json.loads(_WORKER_STATUS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(status, dict):
+            status = {}
+    except (OSError, ValueError):
+        status = {}
+    completed = status.get("tasks_completed")
+    failed = status.get("tasks_failed")
+    return {
+        "running": running,
+        "pid": pid,
+        "mode": mode,
+        "active_profile": status.get("active_profile"),
+        "last_heartbeat": status.get("last_heartbeat"),
+        "heartbeat_status": status.get("heartbeat_status"),
+        "tasks_completed": completed if isinstance(completed, int) else None,
+        "tasks_failed": failed if isinstance(failed, int) else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -554,25 +624,14 @@ async def activity() -> dict:
     caps.sort(key=lambda c: (c["type"] or "", c["name"]))
 
     # --- local daemon status (self-sight counters + heartbeat) ---------------
-    # NOTE: `daemon status` exits 1 when the daemon is NOT running but still
-    # prints the full status block — that is a valid answer, not an error.
+    # T-250: direct read over worker_status.json + BOTH daemon pid files —
+    # the `node-cli daemon status` subprocess is gone (iowap-cli carries no
+    # daemon code since iowap-node 2.3.40; the invocation would be an
+    # argparse usage error now). _pid_alive does the liveness probing, so
+    # the running SSE daemon (node-daemon.pid) stays visible here.
     daemon: dict = {"running": None}
     try:
-        raw = await _run_node_cli(["daemon", "status"], timeout=10.0, ok=(1,))
-        kv: dict[str, str] = {}
-        for line in raw.strip().splitlines():
-            if ":" in line:
-                k, _, v = line.partition(":")
-                kv[k.strip()] = v.strip()
-        daemon = {
-            "running": kv.get("running") == "True",
-            "pid": int(kv["pid"]) if (kv.get("pid") or "").lstrip("-").isdigit() else None,
-            "active_profile": kv.get("active_profile"),
-            "last_heartbeat": kv.get("last_heartbeat"),
-            "heartbeat_status": kv.get("heartbeat_status"),
-            "tasks_completed": int(kv["tasks_completed"]) if (kv.get("tasks_completed") or "").isdigit() else None,
-            "tasks_failed": int(kv["tasks_failed"]) if (kv.get("tasks_failed") or "").isdigit() else None,
-        }
+        daemon = _local_daemon_status()
     except Exception as exc:
         errors.append(f"daemon status: {type(exc).__name__}: {str(exc)[:150]}")
 
