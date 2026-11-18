@@ -20,7 +20,7 @@ IOWAP fleet data into the desktop app:
   (per-stage status dots, result previews, artifacts). Tasks submitted from
   agent sessions via `iowap-task submit` (repo `tools/iowap-task`, installed
   at `~/.local/bin/iowap-task`) land in the same track store — the bridge
-  wraps `node-cli task submit` and merges into
+  wraps `iowap-cli task submit` and merges into
   `~/.hermes/plugin-data/iowap/task-track-iowap.json`. Owner-directed tasks
   (`--owner <node_id>`) show as `delegated` rows (result unreadable from
   this node — server-side T-005g scoping) instead of fetch errors.
@@ -52,13 +52,13 @@ IOWAP fleet data into the desktop app:
 
 ```
 desktop renderer (plugin.js)        gateway process (plugin_api.py)        relay
-┌─────────────────────┐   ctx.rest  ┌──────────────────────────┐  node-cli  ┌───────┐
+┌─────────────────────┐   ctx.rest  ┌──────────────────────────┐  iowap-cli  ┌───────┐
 │ chip / pane / page  │ ──────────► │ /api/plugins/iowap/fleet │ ─────────► │ :8788 │
 └─────────────────────┘             └──────────────────────────┘            └───────┘
 ```
 
 The desktop **frontend** never touches relay HTTP or tokens. The **backend**
-(`/api/plugins/iowap/*`) shells out to `node-cli --json`, which owns all relay
+(`/api/plugins/iowap/*`) shells out to `iowap-cli --json`, which owns all relay
 auth and token handling (`~/.relay/*`). Relay tokens never enter the renderer.
 
 ## Install
@@ -76,7 +76,7 @@ version and `hermes plugins update iowap` pulls it:
 hermes plugins update iowap
 ```
 
-Requires the **node-cli** from the
+Requires the **iowap-cli** from the
 [iowap-node](https://github.com/iowap-org/iowap-node) framework on the
 desktop host (it is not a PyPI package — install with
 `git clone https://github.com/iowap-org/iowap-node && pip install -e .`)
@@ -86,18 +86,18 @@ plugin reload is not enough the first time) and run **Reload desktop
 plugins** (⌘K) afterwards for frontend edits. Without the backend the UI
 degrades gracefully to an onboarding hint.
 
-**How the backend finds node-cli** (the desktop-spawned gateway does not
+**How the backend finds iowap-cli** (the desktop-spawned gateway does not
 inherit the login-shell PATH — resolution must never depend on it):
 `~/.relay/node.yaml` top-level **`node_cli_path`** pin → `PATH` → a short
-list of known venv locations. The pin is written by **node-cli itself**
+list of known venv locations. The pin is written by **iowap-cli itself**
 (every invocation re-stamps its own absolute path, drift-guarded and
 self-healing through `capabilities publish`; requires iowap-node
-≥ 2.3.20 — with an older wheel, run any `node-cli` command once or set
+≥ 2.3.20 — with an older wheel, run any `iowap-cli` command once or set
 the key by hand). This backend reads the key strictly read-only; a stale
 pin falls through to the next link instead of blocking. T-250 rebrand: the
 known-locations list additionally probes the parallel **`iowap-cli`** binary
-in the same directories (always after the `node-cli` entry) — existing
-installs keep resolving node-cli first; the rebrand name is final fallback
+in the same directories (always after the `iowap-cli` entry) — existing
+installs keep resolving iowap-cli first; the rebrand name is final fallback
 depth (the session bridge `tools/iowap-task` mirrors this chain).
 
 ## Install from source (dev)
@@ -115,7 +115,7 @@ curl -o ~/.hermes/desktop-plugins/iowap/plugin.yaml \
   https://raw.githubusercontent.com/iowap-org/iowap-hermes-integration/main/plugin.yaml
 ```
 
-**Backend half** (fleet data through node-cli):
+**Backend half** (fleet data through iowap-cli):
 
 ```bash
 mkdir -p ~/.hermes/plugins/iowap/dashboard
@@ -141,16 +141,16 @@ stays off.
 ## Status
 
 **v0.4.0** — chip + pane + fleet page + palette commands + **tasks page**
-(submit, track, delegated rows), live data via `node-cli`; the **task
+(submit, track, delegated rows), live data via `iowap-cli`; the **task
 watcher** posts submit/progress/final updates and fleet warnings (node
 down/back, relay reachability) into the chat, switchable from ⌘K or the
 Tasks page; UI in en/de/es/fr. Release notes:
 [CHANGELOG.md](CHANGELOG.md). Agent sessions
 join through the `iowap-task` bridge (repo `tools/`, installed at
 `~/.local/bin/iowap-task`) into a shared flock-protected track store. The
-relay health probe runs through node-cli itself (`node-cli server health`)
+relay health probe runs through iowap-cli itself (`iowap-cli server health`)
 — no raw HTTP and no hand-parsed relay URL on the backend side; the target
-pin (relay_config.json, mDNS fallback) stays node-cli's business. Per-node
+pin (relay_config.json, mDNS fallback) stays iowap-cli's business. Per-node
 detail
 (`load_source`) distinguishes host-load (`loadavg`) from agent-scoped cgroup
 values — do not compare load numbers across nodes.
