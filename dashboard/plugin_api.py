@@ -4,15 +4,15 @@ Mounted at /api/plugins/iowap/* inside the Hermes gateway process. The desktop
 renderer reaches it via ctx.rest('/fleet') from plugin.js — see the SDK docs.
 
 Design rules (see repo README):
-- node-cli (from github.com/iowap-org/iowap-node — clone + `pip install -e .`;
+- iowap-cli (from github.com/iowap-org/iowap-node — clone + `pip install -e .`;
   NOT on PyPI despite the earlier comment's claim) is the ONLY relay client
   here. It owns auth, token refresh and token files (~/.relay/*); this
   backend never reads tokens, never talks raw HTTP to the relay.
-- node-cli is invoked with the global --json flag *before* the subcommand
-  (root-level flag; `node-cli update check --json` fails with
+- iowap-cli is invoked with the global --json flag *before* the subcommand
+  (root-level flag; `iowap-cli update check --json` fails with
   "unrecognized arguments" — same class of pitfall).
-- node-cli resolution: `~/.relay/node.yaml` top-level `node_cli_path` pin
-  (self-stamped by node-cli itself, T-226 / iowap-node 2.3.20+) → PATH →
+- iowap-cli resolution: `~/.relay/node.yaml` top-level `node_cli_path` pin
+  (self-stamped by iowap-cli itself, T-226 / iowap-node 2.3.20+) → PATH →
   known venv locations. The pin read is strictly read-only; a stale pin
   falls through. tools/iowap-task mirrors the same chain.
 - Run from HOME, not from an iowap checkout: a local `nodes/` package shadowing
@@ -23,11 +23,11 @@ Design rules (see repo README):
 
 Additional endpoints (T-006):
 - GET /activity  — capability-level view: providers, queue_depth (the honest
-  fleet-wide "has work right now" signal; node-cli has no task list endpoint,
+  fleet-wide "has work right now" signal; iowap-cli has no task list endpoint,
   so per-task activity on remote nodes is NOT observable from here), local
   daemon status, local node identity.
 - GET /tasks     — status of tasks TRACKED BY THIS PLUGIN. Tracking is opt-in
-  because node-cli can only fetch task results whose owner identity matches
+  because iowap-cli can only fetch task results whose owner identity matches
   this node (server-side T-005g scoping on the result endpoint).
   Sources (v2): POST /tasks/submit (dashboard form), POST /tasks/track, and
   the session-side bridge tools/iowap-task (agent sessions) — all merge into
@@ -92,7 +92,7 @@ def _check_setup(force: bool = False) -> dict:
 
     The catalog ships this plugin to machines with no IOWAP installation at
     all: without this classification every UI surface degrades into
-    subprocess error noise. readiness here = node-cli available AND a
+    subprocess error noise. readiness here = iowap-cli available AND a
     registered node state exists. Read-only checks, no subprocess spawn.
     """
     now = time.monotonic()
@@ -111,13 +111,13 @@ def _check_setup(force: bool = False) -> dict:
     reasons: list[str] = []
     if not cli:
         reasons.append(
-            "node-cli not found on this host — install the node framework "
+            "iowap-cli not found on this host — install the node framework "
             "(https://github.com/iowap-org/iowap-node)"
         )
     if not has_state:
         reasons.append(
             "no registered node state (~/.relay/iowap-agent.json) — register "
-            "against a relay with `node-cli node register` "
+            "against a relay with `iowap-cli node register` "
             "(https://github.com/iowap-org/iowap-node#quick-start)"
         )
 
@@ -136,7 +136,7 @@ def _check_setup(force: bool = False) -> dict:
     return result
 
 # ---------------------------------------------------------------------------
-# node-cli discovery / execution
+# iowap-cli discovery / execution
 # ---------------------------------------------------------------------------
 
 # Known install locations, probed at call time. The desktop-spawned gateway
@@ -157,7 +157,7 @@ _NODE_CLI_CANDIDATES = (
 def _node_yaml_cli_pin() -> str | None:
     """Top-level ``node_cli_path`` from ``~/.relay/node.yaml`` (read-only).
 
-    node-cli self-stamps its own absolute path there (T-226, iowap-node
+    iowap-cli self-stamps its own absolute path there (T-226, iowap-node
     2.3.20) — the desktop-spawned gateway may inherit NO usable PATH and
     the known-candidate list cannot enumerate every install layout, so
     the stamp is the first link of the resolution chain. Only a column-0
@@ -176,7 +176,7 @@ def _node_yaml_cli_pin() -> str | None:
 
 
 def _find_node_cli() -> str | None:
-    """Locate node-cli: node.yaml pin → PATH → known install locations."""
+    """Locate iowap-cli: node.yaml pin → PATH → known install locations."""
     pin = _node_yaml_cli_pin()
     if pin:
         cand = Path(pin).expanduser()
@@ -199,14 +199,14 @@ def _resolve_node_cli() -> str:
 
 
 async def _run_node_cli(args: list[str], timeout: float = 20.0, ok: tuple[int, ...] = (0,)) -> str:
-    """Run node-cli --json <args>, return stdout (JSON text).
+    """Run iowap-cli --json <args>, return stdout (JSON text).
 
     `ok`: additional exit codes that still count as success with parseable
     output.
     """
     cmd = [_resolve_node_cli(), "--json", *args]
     env = dict(os.environ)
-    # Guarantee the venv bin dir is visible to node-cli itself (e.g. for
+    # Guarantee the venv bin dir is visible to iowap-cli itself (e.g. for
     # sub-spawns), regardless of how empty the desktop-spawned PATH is.
     venv_bin = Path.home() / ".hermes/hermes-agent/venv/bin"
     vb = str(venv_bin)
@@ -223,10 +223,10 @@ async def _run_node_cli(args: list[str], timeout: float = 20.0, ok: tuple[int, .
         body, errb = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
-        raise TimeoutError(f"node-cli {' '.join(args)} timed out after {timeout}s")
+        raise TimeoutError(f"iowap-cli {' '.join(args)} timed out after {timeout}s")
     if proc.returncode not in ok:
         detail = (errb or body).decode("utf-8", "replace").strip()
-        raise RuntimeError(f"node-cli exit {proc.returncode}: {detail[:300]}")
+        raise RuntimeError(f"iowap-cli exit {proc.returncode}: {detail[:300]}")
     return body.decode("utf-8", "replace")
 
 
@@ -306,7 +306,7 @@ def _local_daemon_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Health: node-cli `server health` probe (T-178/T-007). node-cli stays the
+# Health: iowap-cli `server health` probe (T-178/T-007). iowap-cli stays the
 # ONLY relay client — no httpx, no hand-parsed relay URL.
 # ---------------------------------------------------------------------------
 
@@ -316,9 +316,9 @@ HEALTH_TIMEOUT = 15.0
 
 
 async def _relay_health() -> dict:
-    """Relay health via `node-cli --json server health` (T-178).
+    """Relay health via `iowap-cli --json server health` (T-178).
 
-    node-cli owns relay-target resolution (relay_config.json pin, mDNS
+    iowap-cli owns relay-target resolution (relay_config.json pin, mDNS
     fallback) — this backend keeps nothing hand-parsed. The probe is
     unauthenticated; both outcomes are parseable JSON on stdout (ok=true
     with the health body, ok=false with an error string and exit 1), so
@@ -338,7 +338,7 @@ async def _relay_health() -> dict:
             ["server", "health"], timeout=HEALTH_TIMEOUT, ok=(0, 1)
         )
         parsed = _loads_json(raw)
-    except Exception as exc:  # timeout, node-cli missing, exit not in (0, 1)
+    except Exception as exc:  # timeout, iowap-cli missing, exit not in (0, 1)
         data = {"error": f"{type(exc).__name__}: {exc}", "via": "node-cli"}
     else:
         if isinstance(parsed, dict) and parsed.get("ok"):
@@ -346,7 +346,7 @@ async def _relay_health() -> dict:
         elif isinstance(parsed, dict) and parsed.get("error"):
             data = {"error": str(parsed["error"])[:120], "via": "node-cli"}
         else:
-            data = {"error": "node-cli server health: unexpected output shape",
+            data = {"error": "iowap-cli server health: unexpected output shape",
                     "via": "node-cli"}
 
     _health_state["v"] = (now, data)
@@ -417,7 +417,7 @@ async def fleet() -> dict:
     """Full fleet snapshot: node list + capability map + relay health.
 
     Stages: node list (~1s, serial) then parallel per-node `node info` probes
-    (each shells out to a fresh node-cli process; the daemon remains a separate
+    (each shells out to a fresh iowap-cli process; the daemon remains a separate
     process — a CLI probe never disturbs it). Never raises: errors are reported
     per source so the UI can keep rendering with warnings.
     """
@@ -808,7 +808,7 @@ def _tracked_list() -> list[str]:
 
 
 async def _fetch_task(task_id: str) -> dict:
-    """Fetch ONE full task view via node-cli; caches within a short TTL.
+    """Fetch ONE full task view via iowap-cli; caches within a short TTL.
 
     T-237: this is no longer the /tasks refresh path (that runs through
     `_bulk_status`) — it serves the explicit detail route and the one-time
@@ -851,7 +851,7 @@ _TERMINAL_ALL = ("completed", "failed", "timed_out", "cancelled")
 
 def _bulk_args(status: str | None, sender: str | None,
                since: str | None, until: str | None) -> list[str]:
-    """Exact `task list` argv (T-268 server params, node-cli 2.3.37).
+    """Exact `task list` argv (T-268 server params, iowap-cli 2.3.37).
 
     status → --status (csv), sender → --submitted-by, since/until →
     --since/--until (ISO-8601; the relay maps them onto created_since/
@@ -870,7 +870,7 @@ def _bulk_args(status: str | None, sender: str | None,
 
 
 async def _bulk_status(args: list[str]) -> dict[str, dict]:
-    """ONE subprocess: `node-cli --json task list …` → {task_id: row}.
+    """ONE subprocess: `iowap-cli --json task list …` → {task_id: row}.
 
     Raises on failure — the /tasks handler converts that into a single error
     line and serves cached rows instead of fanning out per-task fetches.
@@ -922,7 +922,7 @@ def _delegated_placeholder(tid: str, m: dict) -> dict:
         "artifacts": [],
         "notes": [],
         "note": ("result not readable from this node — owner-scoped "
-                 "(node-cli task result <id> on the owner, or ask the relay admin DB)"),
+                 "(iowap-cli task result <id> on the owner, or ask the relay admin DB)"),
     }
 
 
@@ -1176,7 +1176,7 @@ async def task_detail(task_id: str) -> dict:
 
 @router.post("/tasks/submit")
 async def tasks_submit(payload: dict) -> dict:
-    """Submit a single-stage task via node-cli and track it.
+    """Submit a single-stage task via iowap-cli and track it.
 
     Body: {"capability": str, "payload": object, "name"?: str,
            "priority"?: int 0-10, "owner"?: str node_id}

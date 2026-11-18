@@ -131,10 +131,10 @@ async def test_tasks_endpoint_renders_delegated_row(track_file, monkeypatch):
     async def _run_node_cli(args, **kwargs):
         if args[:2] == ["task", "list"]:
             return json.dumps({"tasks": [], "viewer": "NODE"})
-        raise AssertionError(f"unexpected node-cli argv {args}")  # probe fails
+        raise AssertionError(f"unexpected iowap-cli argv {args}")  # probe fails
 
     async def _boom(task_id):
-        raise RuntimeError("node-cli exit 4: task not found")  # probe → placeholder
+        raise RuntimeError("iowap-cli exit 4: task not found")  # probe → placeholder
 
     monkeypatch.setattr(plugin_api, "_run_node_cli", _run_node_cli)
     monkeypatch.setattr(plugin_api, "_fetch_task", _boom)
@@ -188,7 +188,7 @@ async def test_tasks_endpoint_passes_session_origin(track_file, monkeypatch):
                 "timeout_seconds": 300, "created_at": "c", "updated_at": "u",
                 "completed_at": None,
             }], "viewer": "NODE"})
-        raise AssertionError(f"unexpected node-cli argv {args}")
+        raise AssertionError(f"unexpected iowap-cli argv {args}")
 
     monkeypatch.setattr(plugin_api, "_run_node_cli", fake_run)
     monkeypatch.setattr(plugin_api, "_check_setup",
@@ -217,7 +217,7 @@ def test_submit_defaults_session_from_env(track_file, monkeypatch):
     bridge = _load_bridge(track_file, monkeypatch)
 
     async def _noop(*_a, **_k):  # never actually reached — sync cmd path
-        raise AssertionError("node-cli must not run in this test")
+        raise AssertionError("iowap-cli must not run in this test")
 
     def fake_node_cli_json(args):
         cap = str(args[2]).split(":", 1)[0]

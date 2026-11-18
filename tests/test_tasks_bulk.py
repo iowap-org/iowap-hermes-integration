@@ -1,10 +1,10 @@
-"""T-237 — bulk status refresh via `node-cli task list` (one subprocess per tick).
+"""T-237 — bulk status refresh via `iowap-cli task list` (one subprocess per tick).
 
 The pre-T-237 /tasks handler fanned out one `task result <id>` subprocess per
-tracked task per poll tick. With node-cli ≥ 2.3.37 `task list` returns task
+tracked task per poll tick. With iowap-cli ≥ 2.3.37 `task list` returns task
 rows (status/updated_at/owner deltas) in ONE call — the plan pins:
 
-- Refresh path: exactly one `node-cli --json task list --status <csv>` per
+- Refresh path: exactly one `iowap-cli --json task list --status <csv>` per
   tick. The plan names `--status pending,running`; this suite pins
   ``pending,running,cancelled`` because `cancelled` IS listable (server
   _LISTABLE_TASK_STATUSES) and its exclusion would either freeze a tracked
@@ -103,9 +103,9 @@ def _fake_run(calls, list_rows=None, results=None, list_error=None):
             tid = args[2]
             body = (results or {}).get(tid)
             if body is None:
-                raise RuntimeError("node-cli exit 4: task not found")
+                raise RuntimeError("iowap-cli exit 4: task not found")
             return json.dumps(body)
-        raise AssertionError(f"unexpected node-cli argv {args}")
+        raise AssertionError(f"unexpected iowap-cli argv {args}")
 
     return fake
 
@@ -131,7 +131,7 @@ def test_bulk_refresh_is_exactly_one_subprocess(track_file, monkeypatch):
         _fake_run(calls, list_rows=[_row(f"t{i}") for i in range(3)]),
     )
     out = asyncio.run(plugin_api.tasks())
-    # ONE node-cli call, exact argv — no --submitted-by without a filter,
+    # ONE iowap-cli call, exact argv — no --submitted-by without a filter,
     # no per-task `task result` fan-out on the refresh path.
     assert calls == [["task", "list", "--status", "pending,running,cancelled"]]
     assert len(out["tasks"]) == 3
@@ -350,7 +350,7 @@ def test_bulk_failure_serves_cache_without_fanout(track_file, monkeypatch):
     calls = []
     monkeypatch.setattr(
         plugin_api, "_run_node_cli",
-        _fake_run(calls, list_error=RuntimeError("node-cli exit 7: relay down")),
+        _fake_run(calls, list_error=RuntimeError("iowap-cli exit 7: relay down")),
     )
     out = asyncio.run(plugin_api.tasks())
     assert calls == [["task", "list", "--status", "pending,running,cancelled"]]

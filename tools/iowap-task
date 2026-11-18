@@ -6,18 +6,18 @@ The dashboard plugin tracks tasks in a persistent store
 (~/.hermes/plugin-data/iowap/task-track-iowap.json — the backend's
 hermes-home plugin-data dir). Tasks submitted via the plugin's
 POST /tasks/submit are tracked automatically — but tasks submitted from an
-agent session with raw `node-cli task submit` were invisible to the plugin.
+agent session with raw `iowap-cli task submit` were invisible to the plugin.
 This wrapper submits AND merges the task into the same flock-protected
 store the backend reads, so both worlds share one source of truth.
 
-USE THIS instead of raw `node-cli task submit` when you want the task to
-appear on the plugin's Tasks page. Output is node-cli's --json output,
+USE THIS instead of raw `iowap-cli task submit` when you want the task to
+appear on the plugin's Tasks page. Output is iowap-cli's --json output,
 passed through unchanged.
 
 Fleet reality (T-005g): `--owner <node_id>` tasks are owner-scoped — the
 result is NOT readable from this node (404 on task result). They still get
 tracked, as `delegated` rows with sidecar metadata (capability/name/owner),
-until a 24h prune. Non-delegated tasks are sanity-checked via node-cli
+until a 24h prune. Non-delegated tasks are sanity-checked via iowap-cli
 before tracking.
 
 Examples:
@@ -70,7 +70,7 @@ _NODE_CLI_CANDIDATES = (
 def _node_yaml_cli_pin() -> str | None:
     """Top-level node_cli_path from ~/.relay/node.yaml (T-226 read-only).
 
-    Same first-link chain as the backend's _node_yaml_cli_pin(): node-cli
+    Same first-link chain as the backend's _node_yaml_cli_pin(): iowap-cli
     self-stamps its absolute path; a stale pin falls through to PATH.
     """
     try:
@@ -108,7 +108,7 @@ def node_cli_json(args: list[str], timeout: float = 30.0) -> dict:
         return json.loads(out.stdout)
     except json.JSONDecodeError:
         raise RuntimeError(
-            f"node-cli produced no JSON (rc={out.returncode}): {out.stderr[:200]}"
+            f"iowap-cli produced no JSON (rc={out.returncode}): {out.stderr[:200]}"
         )
 
 
@@ -219,7 +219,7 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="iowap-task", description=__doc__.splitlines()[1] if __doc__ else None)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("submit", help="submit AND track (wraps node-cli task submit)")
+    s = sub.add_parser("submit", help="submit AND track (wraps iowap-cli task submit)")
     s.add_argument("--stage", required=True, help="'<capability>:<json payload>'")
     s.add_argument("--name")
     s.add_argument("--priority", type=int)

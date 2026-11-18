@@ -2,7 +2,7 @@
  * IOWAP Hermes Integration — fleet statusbar chip + fleet pane + fleet page.
  *
  * Data source: the plugin's Python backend (plugin_api.py → /api/plugins/iowap),
- * which shells out to `node-cli` on the desktop host. node-cli owns all relay
+ * which shells out to `iowap-cli` on the desktop host. iowap-cli owns all relay
  * auth/token handling — relay tokens never enter the desktop renderer.
  * Backend missing (not enabled in config.yaml) → the UI degrades to an error
  * state with a hint, it never crashes the app.
@@ -71,7 +71,7 @@ function healthLineOf(h) {
   if (h.error) return `relay unreachable (${String(h.error).slice(0, 60)})`
   const body = h.body || {}
   const parts = []
-  // T-007: backend probes via `node-cli server health` (body.ok); the legacy
+  // T-007: backend probes via `iowap-cli server health` (body.ok); the legacy
   // raw-`/health` shape (body.status) stays valid until one app restart.
   if (body.ok) parts.push('relay ok')
   else if (body.status) parts.push(`relay ${body.status}`)
@@ -1375,7 +1375,7 @@ export default {
         loadErr: 'fleet data error',
         partialErr: 'data source issue',
         enableHint: 'Fleet data is fetched by the plugin backend (config.yaml → plugins.enabled: iowap + dashboard/plugin_api.py). Reload plugins, or restart the app if it stays empty.',
-        backendBy: 'data via node-cli on this desktop host — relay tokens never enter the app',
+        backendBy: 'data via iowap-cli on this desktop host — relay tokens never enter the app',
         palRefresh: 'IOWAP: refresh fleet data',
         palStatus: 'IOWAP: fleet status',
         palStatusMsg: n => `Fleet: ${n} online`,
@@ -1419,10 +1419,10 @@ export default {
         localNode: 'local node',
         capabilities: 'capabilities',
         setupTitle: 'IOWAP: no node setup on this host',
-        setupWhat: 'This plugin renders your IOWAP fleet via node-cli on this machine. It is installed, but this host has no node framework or registered node yet — so there is nothing to show.',
+        setupWhat: 'This plugin renders your IOWAP fleet via iowap-cli on this machine. It is installed, but this host has no node framework or registered node yet — so there is nothing to show.',
         setupFix: 'Fix it (2 steps):',
         setupStep1: '1. Install the node framework: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
-        setupStep2: '2. Register against a relay: node-cli node register --base-url <relay-url>',
+        setupStep2: '2. Register against a relay: iowap-cli node register --base-url <relay-url>',
         setupStep3: '3. Reload this app — the fleet view appears automatically.',
         setupDocs: 'Docs',
         // task watcher (T-013)
@@ -1485,7 +1485,7 @@ export default {
         loadErr: 'fleet data error',
         partialErr: 'data source issue',
         enableHint: 'Fleet data is fetched by the plugin backend (config.yaml → plugins.enabled: iowap + dashboard/plugin_api.py). Reload plugins, or restart the app if it stays empty.',
-        backendBy: 'data via node-cli on this desktop host — relay tokens never enter the app',
+        backendBy: 'data via iowap-cli on this desktop host — relay tokens never enter the app',
         palRefresh: 'IOWAP: refresh fleet data',
         palStatus: 'IOWAP: fleet status',
         palStatusMsg: n => `Fleet: ${n} online`,
@@ -1518,10 +1518,10 @@ export default {
         localNode: 'local node',
         capabilities: 'Capabilities',
         setupTitle: 'IOWAP: no node setup on this host',
-        setupWhat: 'This plugin renders your IOWAP fleet via node-cli on this machine. It is installed, but this host has no node framework or registered node yet — so there is nothing to show.',
+        setupWhat: 'This plugin renders your IOWAP fleet via iowap-cli on this machine. It is installed, but this host has no node framework or registered node yet — so there is nothing to show.',
         setupFix: 'Fix it (2 steps):',
         setupStep1: '1. Install the node framework: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
-        setupStep2: '2. Register against a relay: node-cli node register --base-url <relay-url>',
+        setupStep2: '2. Register against a relay: iowap-cli node register --base-url <relay-url>',
         setupStep3: '3. Reload this app — the fleet view appears automatically.',
         setupDocs: 'Docs',
         // Task-Watcher (T-013) — chat lines follow the APP LOCALE on purpose
@@ -1585,7 +1585,7 @@ export default {
         loadErr: 'error de datos de flota',
         partialErr: 'problema de la fuente de datos',
         enableHint: 'Los datos de flota los obtiene el backend del plugin (config.yaml → plugins.enabled: iowap + dashboard/plugin_api.py). Recarga los plugins o reinicia la app si permanecen vacíos.',
-        backendBy: 'datos vía node-cli en este equipo — los tokens del relay nunca entran en la app',
+        backendBy: 'datos vía iowap-cli en este equipo — los tokens del relay nunca entran en la app',
         palRefresh: 'IOWAP: actualizar datos de flota',
         palStatus: 'IOWAP: estado de la flota',
         palStatusMsg: n => `Flota: ${n} en línea`,
@@ -1618,10 +1618,10 @@ export default {
         localNode: 'nodo local',
         capabilities: 'Capacidades',
         setupTitle: 'IOWAP: sin configuración de nodo en este equipo',
-        setupWhat: 'Este plugin muestra tu flota IOWAP vía node-cli en esta máquina. Está instalado, pero este equipo no tiene el framework de nodo ni un nodo registrado — así que no hay nada que mostrar.',
+        setupWhat: 'Este plugin muestra tu flota IOWAP vía iowap-cli en esta máquina. Está instalado, pero este equipo no tiene el framework de nodo ni un nodo registrado — así que no hay nada que mostrar.',
         setupFix: 'Arréglalo (2 pasos):',
         setupStep1: '1. Instala el framework de nodo: git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
-        setupStep2: '2. Regístrate en un relay: node-cli node register --base-url <relay-url>',
+        setupStep2: '2. Regístrate en un relay: iowap-cli node register --base-url <relay-url>',
         setupStep3: '3. Recarga esta app — la vista de flota aparece automáticamente.',
         setupDocs: 'Docs',
         // Task-Watcher (T-013) — las líneas del chat siguen el locale de la app
@@ -1684,7 +1684,7 @@ export default {
         loadErr: 'erreur des données de flotte',
         partialErr: 'problème de la source de données',
         enableHint: `Les données de flotte sont récupérées par le backend du plugin (config.yaml → plugins.enabled: iowap + dashboard/plugin_api.py). Rechargez les plugins ou redémarrez l'app si elles restent vides.`,
-        backendBy: `données via node-cli sur ce poste — les tokens du relay n'entrent jamais dans l'app`,
+        backendBy: `données via iowap-cli sur ce poste — les tokens du relay n'entrent jamais dans l'app`,
         palRefresh: 'IOWAP : actualiser les données de flotte',
         palStatus: 'IOWAP : état de la flotte',
         palStatusMsg: n => `Flotte : ${n} en ligne`,
@@ -1717,10 +1717,10 @@ export default {
         localNode: 'nœud local',
         capabilities: 'Capacités',
         setupTitle: 'IOWAP : aucun nœud configuré sur ce poste',
-        setupWhat: `Ce plugin affiche votre flotte IOWAP via node-cli sur cette machine. Il est installé, mais ce poste n'a ni framework de nœud ni nœud enregistré — rien à afficher.`,
+        setupWhat: `Ce plugin affiche votre flotte IOWAP via iowap-cli sur cette machine. Il est installé, mais ce poste n'a ni framework de nœud ni nœud enregistré — rien à afficher.`,
         setupFix: 'Corrigez (2 étapes) :',
         setupStep1: '1. Installez le framework du nœud : git clone https://github.com/iowap-org/iowap-node && cd iowap-node && pip install -e .',
-        setupStep2: `2. Enregistrez-vous auprès d'un relay : node-cli node register --base-url <relay-url>`,
+        setupStep2: `2. Enregistrez-vous auprès d'un relay : iowap-cli node register --base-url <relay-url>`,
         setupStep3: '3. Rechargez cette app — la vue flotte apparaît automatiquement.',
         setupDocs: 'Docs',
         // Observateur de tâches (T-013) — les lignes de chat suivent le locale de l'app

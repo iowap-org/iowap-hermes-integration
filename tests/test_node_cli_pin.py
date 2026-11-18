@@ -1,13 +1,13 @@
 """node.yaml cli-pin resolution (T-012).
 
-node-cli self-stamps its absolute path as the top-level ``node_cli_path``
+iowap-cli self-stamps its absolute path as the top-level ``node_cli_path``
 key in ``~/.relay/node.yaml`` (T-226, iowap-node 2.3.20). The desktop
 gateway inherits no login-shell PATH and the known-candidates list cannot
 enumerate every install layout (live mac case: the binary lives in
 ``~/iowap-node/.venv/bin/node-cli`` — none of the candidates, and the
 desktop-spawned PATH finds nothing).
 
-Contract for EVERY node-cli consumer in this repo — the backend
+Contract for EVERY iowap-cli consumer in this repo — the backend
 (``_resolve_node_cli``, ``_check_setup``) and the session bridge
 (``tools/iowap-task``):
 

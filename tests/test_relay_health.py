@@ -1,11 +1,11 @@
 """Tests for the relay health probe (T-007).
 
-The health probe must go through node-cli (`server health`, T-178) — the
+The health probe must go through iowap-cli (`server health`, T-178) — the
 only relay client of this backend (plugin_api docstring rule). The former
 httpx implementation hand-parsed base_url out of ~/.relay/iowap-agent.json,
 which the T-198 wheel release no longer carries: live on 2026-10-10 the
 deployed probe reported "relay not configured" while the relay itself was
-healthy (9/10 nodes online). These tests pin the node-cli contract.
+healthy (9/10 nodes online). These tests pin the iowap-cli contract.
 """
 
 import asyncio
@@ -20,7 +20,7 @@ _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent / "dashboard"))
 plugin_api = importlib.import_module("plugin_api")
 
-# node-cli `server health --json` (verified live against the T-178 wheel):
+# iowap-cli `server health --json` (verified live against the T-178 wheel):
 # both outcomes arrive as JSON on stdout — ok=true carries the health body,
 # ok=false carries the error string, the latter with exit code 1.
 _OK_BODY = {
@@ -82,7 +82,7 @@ def test_health_survives_node_cli_exception(monkeypatch):
     monkeypatch.setattr(
         plugin_api,
         "_run_node_cli",
-        _fake_run(calls, exc=RuntimeError("node-cli exit 2: boom")),
+        _fake_run(calls, exc=RuntimeError("iowap-cli exit 2: boom")),
     )
     data = asyncio.run(plugin_api._relay_health())
     assert calls == [["server", "health"]]
@@ -102,7 +102,7 @@ def test_health_is_cached_within_ttl(monkeypatch):
 def test_health_never_touches_local_files(monkeypatch):
     """Regression pin for the live finding: the probe must not resolve its
     target from ~/.relay/* (agent.json has carried no base_url since the
-    T-198 wheel release moved the pin to relay_config.json) — node-cli owns
+    T-198 wheel release moved the pin to relay_config.json) — iowap-cli owns
     target resolution, so this backend must not consult HOME or config files
     inside the health path."""
 
