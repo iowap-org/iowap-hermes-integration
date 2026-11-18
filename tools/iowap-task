@@ -58,12 +58,9 @@ TRACK_FILE = (
 MAX_IDS = 50
 
 # same probe order as the backend (desktop gateway PATH is unreliable);
-# T-250: the iowap-cli rebrand entries mirror node-cli — same dirs, same
-# order, strictly AFTER them (rebrand name is final fallback depth only)
+# T-250 shim sunset: only the iowap-cli binaries are probed — the legacy
+# node-cli console script is gone (iowap-node 2.3.43 removed the shims)
 _NODE_CLI_CANDIDATES = (
-    Path.home() / ".hermes/hermes-agent/venv/bin/node-cli",
-    Path.home() / ".local/bin/node-cli",
-    Path("/usr/local/bin/node-cli"),
     Path.home() / ".hermes/hermes-agent/venv/bin/iowap-cli",
     Path.home() / ".local/bin/iowap-cli",
     Path("/usr/local/bin/iowap-cli"),
@@ -93,13 +90,13 @@ def find_node_cli() -> str:
         cand = Path(pin).expanduser()
         if cand.is_file() and os.access(cand, os.X_OK):
             return str(cand)
-    found = shutil.which("node-cli")
+    found = shutil.which("iowap-cli")
     if found:
         return found
     for cand in _NODE_CLI_CANDIDATES:
         if cand.exists():
             return str(cand)
-    sys.exit("node-cli not found in PATH or known install locations")
+    sys.exit("iowap-cli not found in PATH or known install locations")
 
 
 def node_cli_json(args: list[str], timeout: float = 30.0) -> dict:

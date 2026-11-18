@@ -143,13 +143,11 @@ def _check_setup(force: bool = False) -> dict:
 # process does NOT inherit the login-shell PATH (desktop.log: "login-shell
 # PATH resolution unavailable; keeping inherited PATH"), so shutil.which()
 # alone finds nothing there — resolution must not depend on the ambient PATH.
-# T-250: the parallel iowap-cli rebrand binary rides the same list — same
-# dirs, same order, strictly AFTER the node-cli entries (existing installs
-# keep resolving node-cli; the rebrand name is final fallback depth).
+# T-250 shim sunset (v0.6.3): the legacy node-cli console script is gone
+# (iowap-node 2.3.43 removed the shims) — the known-locations list probes
+# only the `iowap-cli` binary; the node.yaml pin stays the FIRST link and
+# records the stamped iowap-cli path.
 _NODE_CLI_CANDIDATES = (
-    Path.home() / ".hermes/hermes-agent/venv/bin/node-cli",
-    Path.home() / ".local/bin/node-cli",
-    "/usr/local/bin/node-cli",
     Path.home() / ".hermes/hermes-agent/venv/bin/iowap-cli",
     Path.home() / ".local/bin/iowap-cli",
     "/usr/local/bin/iowap-cli",
@@ -184,7 +182,7 @@ def _find_node_cli() -> str | None:
         cand = Path(pin).expanduser()
         if cand.is_file() and os.access(cand, os.X_OK):
             return str(cand)
-    found = shutil.which("node-cli")
+    found = shutil.which("iowap-cli")
     if found:
         return found
     for cand in _NODE_CLI_CANDIDATES:
@@ -197,7 +195,7 @@ def _resolve_node_cli() -> str:
     found = _find_node_cli()
     if found:
         return found
-    return "node-cli"  # let create_subprocess_exec raise a clear error
+    return "iowap-cli"  # let create_subprocess_exec raise a clear error
 
 
 async def _run_node_cli(args: list[str], timeout: float = 20.0, ok: tuple[int, ...] = (0,)) -> str:

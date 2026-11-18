@@ -12,16 +12,17 @@ Contract for EVERY node-cli consumer in this repo — the backend
 (``tools/iowap-task``):
 
 * the node.yaml pin is the FIRST link of the resolution chain — an
-  executable pin wins even when PATH finds another node-cli;
+  executable pin wins even when PATH finds another binary;
 * the pin is read-only: a stale/nonexistent pin FALLS THROUGH (which →
   known candidates) instead of blocking the backend;
 * only a top-level (column-0) ``node_cli_path:`` counts; indented keys
   inside capability blocks are never picked up;
 * quoted and bare scalars both parse;
-* the known-candidates list also covers the parallel ``iowap-cli`` rebrand
-  binary (T-250): same three directories, same order, strictly AFTER the
-  ``node-cli`` entries — an existing node-cli still wins, the rebrand name
-  is reached only as final fallback depth (the pin stays the first link).
+* T-250 shim sunset: the known-candidates list probes ONLY the
+  ``iowap-cli`` binary — the legacy ``node-cli`` console script is gone
+  (iowap-node 2.3.43 removed the shims), its known locations are dead
+  candidates (the pin stays the first link and records the stamped
+  iowap-cli path).
 """
 
 import importlib.machinery
@@ -70,7 +71,7 @@ def fake_home_no_relay(tmp_path, monkeypatch):
 
 
 def test_pin_beats_path_and_candidates(fake_home, monkeypatch):
-    pin = _fake_exe(fake_home / "iowap" / "bin" / "node-cli")
+    pin = _fake_exe(fake_home / "iowap" / "bin" / "iowap-cli")
     (fake_home / ".relay" / "node.yaml").write_text(
         f'node_cli_path: "{pin}"\n', encoding="utf-8"
     )
@@ -97,7 +98,7 @@ def test_stale_pin_and_dead_which_fall_through_to_candidates(
     )
     monkeypatch.setattr(plugin_api.shutil, "which", lambda _p: None)
     candidate = _fake_exe(
-        fake_home / ".hermes" / "hermes-agent" / "venv" / "bin" / "node-cli"
+        fake_home / ".hermes" / "hermes-agent" / "venv" / "bin" / "iowap-cli"
     )
     # _NODE_CLI_CANDIDATES is import-time baked against the real HOME —
     # point it at the isolated home so only the isolated inventory counts
@@ -109,7 +110,7 @@ def test_stale_pin_and_dead_which_fall_through_to_candidates(
 
 
 def test_bare_scalar_and_spaces_stripped(fake_home):
-    pin = _fake_exe(fake_home / ".local" / "bin" / "node-cli")
+    pin = _fake_exe(fake_home / ".local" / "bin" / "iowap-cli")
     (fake_home / ".relay" / "node.yaml").write_text(
         f"node_cli_path:  {pin}  \n", encoding="utf-8"
     )
@@ -135,7 +136,7 @@ def test_missing_node_yaml_falls_through(fake_home_no_relay, monkeypatch):
 
 
 def test_check_setup_uses_the_pin(fake_home, monkeypatch):
-    pin = _fake_exe(fake_home / "iowap" / "bin" / "node-cli")
+    pin = _fake_exe(fake_home / "iowap" / "bin" / "iowap-cli")
     (fake_home / ".relay" / "node.yaml").write_text(
         f'node_cli_path: "{pin}"\n', encoding="utf-8"
     )
@@ -149,31 +150,29 @@ def test_check_setup_uses_the_pin(fake_home, monkeypatch):
     assert setup["node_cli"] == str(pin)
 
 
-# ------------------------------------------------------------ T-250 rebrand
+# ------------------------------------------------------------ T-250 shim sunset
 
 
-def test_backend_candidates_cover_iowap_cli_rebrand():
-    """T-250: the parallel rebrand binary rides the same known-locations
-    list — same three directories, same order, strictly AFTER the node-cli
-    entries, so existing installs keep resolving node-cli first."""
+def test_backend_candidates_are_iowap_cli_only():
+    """T-250 shim sunset: the legacy node-cli console script is gone — the
+    known-locations list probes exactly the three iowap-cli directories,
+    order preserved (venv bin → .local/bin → /usr/local/bin)."""
     cands = [str(c) for c in plugin_api._NODE_CLI_CANDIDATES]
     home = Path.home()
     assert cands == [
-        str(home / ".hermes/hermes-agent/venv/bin/node-cli"),
-        str(home / ".local/bin/node-cli"),
-        "/usr/local/bin/node-cli",
         str(home / ".hermes/hermes-agent/venv/bin/iowap-cli"),
         str(home / ".local/bin/iowap-cli"),
         "/usr/local/bin/iowap-cli",
     ]
+    assert not any("node-cli" in c for c in cands)
 
 
-def test_backend_iowap_cli_candidate_reached_when_node_cli_missing(
+def test_backend_candidate_reached_with_dead_pin_and_path(
     fake_home, monkeypatch
 ):
-    """Stale pin, dead PATH, no node-cli candidate anywhere — the rebrand
-    binary still resolves the runner (candidates are fallback depth of the
-    chain; the pin stays the first link when a live one exists)."""
+    """Stale pin, dead PATH — the binary in a known location still resolves
+    the runner (candidates are fallback depth of the chain; the pin stays
+    the first link when a live one exists)."""
     (fake_home / ".relay" / "node.yaml").write_text(
         'node_cli_path: "/gone/away/node-cli"\n', encoding="utf-8"
     )
@@ -187,10 +186,7 @@ def test_backend_iowap_cli_candidate_reached_when_node_cli_missing(
         plugin_api,
         "_NODE_CLI_CANDIDATES",
         (
-            fake_home / ".hermes/hermes-agent/venv/bin/node-cli",
-            fake_home / ".local/bin/node-cli",
-            "/usr/local/bin/node-cli",
-            rebrand,
+            fake_home / ".hermes/hermes-agent/venv/bin/iowap-cli",
             fake_home / ".local/bin/iowap-cli",
             "/usr/local/bin/iowap-cli",
         ),
@@ -199,26 +195,26 @@ def test_backend_iowap_cli_candidate_reached_when_node_cli_missing(
     assert plugin_api._resolve_node_cli() == str(rebrand)
 
 
-def test_backend_node_cli_candidate_still_wins_over_iowap_cli(
-    fake_home, monkeypatch
-):
-    """Order guarantee: an installed node-cli candidate is preferred; the
-    rebrand name is reached only when every node-cli probe already missed."""
+def test_backend_first_candidate_directory_wins(fake_home, monkeypatch):
+    """Order guarantee among the remaining candidates: the first listed
+    known location (venv bin) beats later ones."""
     monkeypatch.setattr(plugin_api.shutil, "which", lambda _p: None)
     bin_dir = fake_home / ".hermes" / "hermes-agent" / "venv" / "bin"
-    node_cli = _fake_exe(bin_dir / "node-cli")
-    _fake_exe(bin_dir / "iowap-cli")
+    local_bin = fake_home / ".local" / "bin"
+    first = _fake_exe(bin_dir / "iowap-cli")
+    _fake_exe(local_bin / "iowap-cli")
     monkeypatch.setattr(
-        plugin_api, "_NODE_CLI_CANDIDATES", (node_cli, bin_dir / "iowap-cli")
+        plugin_api,
+        "_NODE_CLI_CANDIDATES",
+        (bin_dir / "iowap-cli", local_bin / "iowap-cli"),
     )
 
-    assert plugin_api._resolve_node_cli() == str(node_cli)
+    assert plugin_api._resolve_node_cli() == str(first)
 
 
 def test_check_setup_ready_via_iowap_cli_candidate(fake_home, monkeypatch):
-    """Rebrand-only setups (T-250) pass the setup gate through the
-    iowap-cli candidate — _check_setup and _resolve_node_cli share the
-    same extended list."""
+    """Setups pass the setup gate through the iowap-cli candidate —
+    _check_setup and _resolve_node_cli share the same list."""
     monkeypatch.setattr(plugin_api.shutil, "which", lambda _p: None)
     rebrand = _fake_exe(
         fake_home / ".hermes" / "hermes-agent" / "venv" / "bin" / "iowap-cli"
@@ -250,7 +246,7 @@ def _load_bridge(tmp_path, monkeypatch):
 
 
 def test_bridge_pin_beats_path(fake_home, tmp_path, monkeypatch):
-    pin = _fake_exe(fake_home / "iowap" / "bin" / "node-cli")
+    pin = _fake_exe(fake_home / "iowap" / "bin" / "iowap-cli")
     (fake_home / ".relay" / "node.yaml").write_text(
         f"node_cli_path: {pin}\n", encoding="utf-8"
     )
@@ -269,27 +265,25 @@ def test_bridge_stale_pin_falls_through(fake_home, tmp_path, monkeypatch):
     assert bridge.find_node_cli() == "/which/one/cli"
 
 
-def test_bridge_candidates_cover_iowap_cli_rebrand(tmp_path, monkeypatch):
-    """T-250: tools/iowap-task mirrors the backend list — same rebrand
-    paths, same order, strictly after the node-cli entries."""
+def test_bridge_candidates_are_iowap_cli_only(tmp_path, monkeypatch):
+    """T-250 shim sunset: tools/iowap-task mirrors the backend list —
+    exactly the three iowap-cli paths, order preserved, no node-cli."""
     bridge = _load_bridge(tmp_path, monkeypatch)
     cands = [str(c) for c in bridge._NODE_CLI_CANDIDATES]
     home = Path.home()
     assert cands == [
-        str(home / ".hermes/hermes-agent/venv/bin/node-cli"),
-        str(home / ".local/bin/node-cli"),
-        "/usr/local/bin/node-cli",
         str(home / ".hermes/hermes-agent/venv/bin/iowap-cli"),
         str(home / ".local/bin/iowap-cli"),
         "/usr/local/bin/iowap-cli",
     ]
+    assert not any("node-cli" in c for c in cands)
 
 
-def test_bridge_iowap_cli_candidate_reached_when_node_cli_missing(
+def test_bridge_candidate_reached_with_dead_pin_and_path(
     fake_home, tmp_path, monkeypatch
 ):
-    """No usable pin, dead PATH, no node-cli candidate — the bridge still
-    finds the rebrand binary in a known location (fallback depth)."""
+    """No usable pin, dead PATH — the bridge still finds the binary in a
+    known location (fallback depth)."""
     (fake_home / ".relay" / "node.yaml").write_text(
         'node_cli_path: "/gone/away/node-cli"\n', encoding="utf-8"
     )

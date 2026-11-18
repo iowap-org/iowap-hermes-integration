@@ -2,6 +2,21 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.6.3 — 2026-11-18
+
+### Fixed
+- **node-cli shim sunset cleanup (T-250)**: the node-cli resolution chain
+  probes only `iowap-cli` now — `_NODE_CLI_CANDIDATES` (backend) and the
+  mirrored list in `tools/iowap-task` drop the three legacy `node-cli`
+  known locations (iowap-node 2.3.43 removed the `node-cli`/`node-daemon`
+  console scripts, so those paths could only ever resolve stale binaries).
+  PATH probing targets `iowap-cli`; the no-resolution fallback spawn name
+  is `iowap-cli` in both consumers. The `~/.relay/node.yaml`
+  `node_cli_path` pin stays the FIRST link of the chain and now records
+  the stamped `iowap-cli` binary. Contract tests repointed
+  (`test_node_cli_pin.py`: candidates are iowap-cli-only, first-candidate
+  directory wins).
+
 ## 0.6.2 — 2026-11-18
 
 ### Fixed
