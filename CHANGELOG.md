@@ -2,6 +2,23 @@
 
 Dates in Europe/Berlin. Behavior changes bump minor, fixes bump patch.
 
+## 0.6.1 — 2026-11-18
+
+### Added
+- **iowap-cli rebrand discovery (T-250)**: the node-cli resolution chain in
+  THIS consumer now also probes the parallel `iowap-cli` binary — both the
+  backend (`_NODE_CLI_CANDIDATES`, serving `_resolve_node_cli` and
+  `_check_setup` alike) and the session bridge (`tools/iowap-task`), which
+  mirrors the backend list. Same three known install locations
+  (`~/.hermes/hermes-agent/venv/bin`, `~/.local/bin`, `/usr/local/bin`),
+  each `iowap-cli` entry directly after the `node-cli` entry of its
+  directory. Deliberately NOT a behavior change for existing installs: the
+  `node.yaml` `node_cli_path` pin stays the first link, PATH and every
+  node-cli candidate still win, and the rebrand name is reached only as
+  final fallback depth (hence a patch bump). Candidate shape and order are
+  pinned by new contract tests in `tests/test_node_cli_pin.py` for both
+  consumers.
+
 ## 0.6.0 — 2026-11-12
 
 ### Added

@@ -143,10 +143,16 @@ def _check_setup(force: bool = False) -> dict:
 # process does NOT inherit the login-shell PATH (desktop.log: "login-shell
 # PATH resolution unavailable; keeping inherited PATH"), so shutil.which()
 # alone finds nothing there — resolution must not depend on the ambient PATH.
+# T-250: the parallel iowap-cli rebrand binary rides the same list — same
+# dirs, same order, strictly AFTER the node-cli entries (existing installs
+# keep resolving node-cli; the rebrand name is final fallback depth).
 _NODE_CLI_CANDIDATES = (
     Path.home() / ".hermes/hermes-agent/venv/bin/node-cli",
     Path.home() / ".local/bin/node-cli",
     "/usr/local/bin/node-cli",
+    Path.home() / ".hermes/hermes-agent/venv/bin/iowap-cli",
+    Path.home() / ".local/bin/iowap-cli",
+    "/usr/local/bin/iowap-cli",
 )
 
 

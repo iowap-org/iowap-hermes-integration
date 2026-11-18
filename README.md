@@ -94,7 +94,11 @@ list of known venv locations. The pin is written by **node-cli itself**
 self-healing through `capabilities publish`; requires iowap-node
 ≥ 2.3.20 — with an older wheel, run any `node-cli` command once or set
 the key by hand). This backend reads the key strictly read-only; a stale
-pin falls through to the next link instead of blocking.
+pin falls through to the next link instead of blocking. T-250 rebrand: the
+known-locations list additionally probes the parallel **`iowap-cli`** binary
+in the same directories (always after the `node-cli` entry) — existing
+installs keep resolving node-cli first; the rebrand name is final fallback
+depth (the session bridge `tools/iowap-task` mirrors this chain).
 
 ## Install from source (dev)
 

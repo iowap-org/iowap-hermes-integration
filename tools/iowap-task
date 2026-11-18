@@ -57,11 +57,16 @@ TRACK_FILE = (
 )
 MAX_IDS = 50
 
-# same probe order as the backend (desktop gateway PATH is unreliable)
+# same probe order as the backend (desktop gateway PATH is unreliable);
+# T-250: the iowap-cli rebrand entries mirror node-cli — same dirs, same
+# order, strictly AFTER them (rebrand name is final fallback depth only)
 _NODE_CLI_CANDIDATES = (
     Path.home() / ".hermes/hermes-agent/venv/bin/node-cli",
     Path.home() / ".local/bin/node-cli",
     Path("/usr/local/bin/node-cli"),
+    Path.home() / ".hermes/hermes-agent/venv/bin/iowap-cli",
+    Path.home() / ".local/bin/iowap-cli",
+    Path("/usr/local/bin/iowap-cli"),
 )
 
 
